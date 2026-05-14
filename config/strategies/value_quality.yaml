@@ -1,0 +1,12 @@
+# 价值 + 质量组合（季频）
+strategy: multi_factor.value_quality
+universe: hs300
+params:
+  top_n: 30
+  rebalance_freq: Q
+backtest:
+  start: 2020-01-01
+  end: 2024-12-31
+  initial_cash: 1000000
+  benchmark: 000300.SH
+  adjust: qfq

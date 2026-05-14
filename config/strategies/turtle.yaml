@@ -1,0 +1,15 @@
+# 海龟交易（日频）
+strategy: cta.turtle
+universe: hs300
+params:
+  entry_window: 20
+  exit_window: 10
+  atr_window: 20
+  atr_stop: 2.0
+  risk_per_trade: 0.01
+backtest:
+  start: 2020-01-01
+  end: 2024-12-31
+  initial_cash: 1000000
+  benchmark: 000300.SH
+  adjust: qfq

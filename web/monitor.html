@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ashare-quant · 监控大屏</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  .mg { display: grid; gap: 14px; grid-template-columns: repeat(12, 1fr); }
+  .s3 { grid-column: span 3; } .s4 { grid-column: span 4; }
+  .s5 { grid-column: span 5; } .s7 { grid-column: span 7; }
+  .s8 { grid-column: span 8; } .s12 { grid-column: span 12; }
+  .big-num { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+  .heartbeat { animation: pulse 1.4s infinite ease-in-out; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <div>
+    <header class="topbar"></header>
+    <main class="main">
+      <div class="page-title">
+        <h1>实盘监控大屏 <span class="tag green heartbeat" style="margin-left:8px">LIVE</span></h1>
+        <span class="muted mono" id="clockBig" style="font-size:16px"></span>
+      </div>
+
+      <div class="mg" id="mg">
+        <div class="kpi s3"><span class="label">总资产</span><span class="big-num" id="m_total">--</span><span class="delta up" id="m_total_d"></span></div>
+        <div class="kpi s3"><span class="label">今日盈亏</span><span class="big-num" id="m_today">--</span><span class="delta" id="m_today_d"></span></div>
+        <div class="kpi s3"><span class="label">持仓数</span><span class="big-num" id="m_pos">--</span><span class="delta">实时</span></div>
+        <div class="kpi s3"><span class="label">最大回撤</span><span class="big-num" id="m_dd">--</span><span class="delta up">阈值充裕</span></div>
+
+        <div class="panel s8">
+          <div class="panel-title"><span>组合 NAV 实时曲线</span></div>
+          <div style="height:360px"><canvas id="navChart"></canvas></div>
+        </div>
+
+        <div class="panel s4">
+          <div class="panel-title">风控状态</div>
+          <div id="riskBars" style="display:flex;flex-direction:column;gap:12px"></div>
+        </div>
+
+        <div class="panel s7">
+          <div class="panel-title"><span>持仓 Top 10</span></div>
+          <table class="table">
+            <thead><tr><th>代码</th><th class="num">现价</th><th class="num">市值</th><th class="num">权重</th><th class="num">浮盈%</th></tr></thead>
+            <tbody id="posTable"></tbody>
+          </table>
+        </div>
+
+        <div class="panel s5">
+          <div class="panel-title"><span>实时成交流</span><small id="tickCount">0</small></div>
+          <div class="scroll-y" id="tickStream" style="font-family:'JetBrains Mono',monospace;font-size:12px;height:340px"></div>
+        </div>
+
+        <div class="panel s4">
+          <div class="panel-title">行业分布</div>
+          <div style="height:240px"><canvas id="indChart"></canvas></div>
+        </div>
+
+        <div class="panel s4">
+          <div class="panel-title">运行策略</div>
+          <table class="table">
+            <tbody id="stratBody"></tbody>
+          </table>
+          <div class="spacer-md"></div>
+          <div class="panel-title">今日操作</div>
+          <table class="table">
+            <tbody id="opsBody"></tbody>
+          </table>
+        </div>
+
+        <div class="panel s4">
+          <div class="panel-title"><span>实时告警</span></div>
+          <div class="scroll-y" id="alertStream" style="height:340px"></div>
+        </div>
+
+        <div class="panel s12">
+          <div class="panel-title">系统资源</div>
+          <div class="grid cols-4" id="sysRow"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/api.js"></script>
+<script>
+AQ.renderSidebar('monitor.html');
+AQ.renderTopbar('<b>监控大屏</b> <span class="tag green heartbeat">LIVE</span>');
+
+function tickClock() { document.getElementById('clockBig').textContent = new Date().toLocaleString('zh-CN', { hour12: false }); }
+tickClock(); setInterval(tickClock, 1000);
+
+let navChart, indChart;
+const cpuSeries = Array(30).fill(0);
+let cpuChart;
+
+async function refresh() {
+  try {
+    const s = await API.monitor.snapshot();
+    renderKpis(s.kpis);
+    renderNav(s.nav);
+    renderRisk(s.risk);
+    renderPositions(s.positions);
+    renderInd(s.industry);
+    renderStrats(s.strategies, s.today_ops);
+    renderAlerts(s.alerts);
+  } catch (e) { /* ignore */ }
+
+  try {
+    const sys = await API.monitor.system();
+    renderSys(sys);
+  } catch (e) {}
+}
+
+function renderKpis(k) {
+  document.getElementById('m_total').textContent = '¥' + AQ.fmt(k.total_asset, 0);
+  document.getElementById('m_today').textContent = (k.today_pnl>=0?'+':'')+'¥'+AQ.fmt(Math.abs(k.today_pnl), 0);
+  document.getElementById('m_today').className = 'big-num ' + (k.today_pnl>=0?'pos':'neg');
+  document.getElementById('m_pos').textContent = k.positions_count;
+  document.getElementById('m_dd').textContent = (k.max_drawdown*100).toFixed(2) + '%';
+}
+
+function renderNav(d) {
+  if (navChart) navChart.destroy();
+  navChart = new Chart(document.getElementById('navChart'), {
+    type: 'line',
+    data: { labels: d.ts, datasets: [
+      { label: '组合', data: d.portfolio, borderColor: '#22d3ee', backgroundColor: 'rgba(34,211,238,0.10)', borderWidth: 2, tension: 0.3, pointRadius: 0, fill: true },
+      { label: 'HS300', data: d.benchmark, borderColor: '#94a3b8', borderWidth: 1.5, borderDash: [4,4], tension: 0.3, pointRadius: 0 },
+    ] }, options: AQ.CHART_DEFAULTS,
+  });
+}
+
+function renderRisk(r) {
+  const items = [
+    ['最大回撤', `${r.drawdown.current.toFixed(2)}% / ${r.drawdown.threshold}%`, r.drawdown.usage_pct],
+    ['单日亏损', `${r.daily_loss.current.toFixed(2)}% / ${r.daily_loss.threshold}%`, r.daily_loss.usage_pct],
+    ['最大单仓', `${r.max_position.current.toFixed(1)}% / ${r.max_position.threshold}%`, r.max_position.usage_pct],
+    ['最大行业', `${r.max_industry.current.toFixed(1)}% / ${r.max_industry.threshold}%`, r.max_industry.usage_pct],
+    ['换手率',   `${r.turnover.current.toFixed(1)}% / ${r.turnover.threshold}%`, r.turnover.usage_pct],
+  ];
+  document.getElementById('riskBars').innerHTML = items.map(([n,v,p]) => `
+    <div>
+      <div class="row-flex between"><span class="muted">${n}</span><span class="mono">${v}</span></div>
+      <div class="progress"><div class="bar" style="width:${p}%"></div></div>
+    </div>`).join('');
+}
+
+function renderPositions(pos) {
+  document.getElementById('posTable').innerHTML = pos.map(p =>
+    `<tr><td class="mono">${p.symbol}</td>
+     <td class="num">${p.last_price.toFixed(2)}</td>
+     <td class="num">¥${AQ.fmt(p.market_value, 0)}</td>
+     <td class="num">${(p.weight*100).toFixed(1)}%</td>
+     <td class="num ${p.pnl_pct>=0?'pos':'neg'}">${p.pnl_pct>=0?'+':''}${(p.pnl_pct*100).toFixed(2)}%</td></tr>`).join('');
+}
+
+function renderInd(ind) {
+  if (indChart) indChart.destroy();
+  indChart = new Chart(document.getElementById('indChart'), {
+    type: 'doughnut',
+    data: { labels: Object.keys(ind), datasets: [{ data: Object.values(ind),
+      backgroundColor: ['#22d3ee','#06b6d4','#0ea5e9','#a78bfa','#10b981','#f59e0b','#ef4444','#6b7280'], borderWidth: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 10 } } } }, cutout: '60%' }
+  });
+}
+
+function renderStrats(arr, ops) {
+  document.getElementById('stratBody').innerHTML = arr.map(s =>
+    `<tr><td>${s.name}</td><td><span class="tag ${s.status==='running'?'green':'gray'}">${s.status}</span></td><td class="num pos">+${s.ret_ytd}%</td></tr>`).join('');
+  document.getElementById('opsBody').innerHTML = [
+    ['下单', ops.orders],['成交', ops.fills],['撤单', ops.cancels],['拒单', ops.rejects],
+  ].map(r => `<tr><td>${r[0]}</td><td class="num">${r[1]}</td></tr>`).join('');
+}
+
+function renderAlerts(arr) {
+  const color = { info: 'var(--green)', warn: 'var(--yellow)', crit: 'var(--red)' };
+  document.getElementById('alertStream').innerHTML = arr.map(a => `
+    <div style="padding:10px;border-left:3px solid ${color[a.level]||'var(--green)'};background:rgba(255,255,255,0.02);border-radius:4px;margin-bottom:8px">
+      <div class="row-flex between"><b>${a.title}</b><span class="muted mono" style="font-size:11px">${a.ts}</span></div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${a.desc}</div>
+    </div>`).join('');
+}
+
+function renderSys(s) {
+  document.getElementById('sysRow').innerHTML = [
+    ['CPU', s.cpu.toFixed(0)+'%'],
+    ['内存', s.mem_used_gb + ' / ' + s.mem_total_gb + ' GB'],
+    ['网络', s.net_kbps + ' KB/s'],
+    ['行情延迟', s.feed_latency_ms + ' ms'],
+  ].map(([n,v]) => `<div><div class="row-flex between"><span class="muted">${n}</span><span class="mono">${v}</span></div></div>`).join('');
+}
+
+// 实时 tick 流 (SSE)
+let tickCount = 0;
+const stream = document.getElementById('tickStream');
+function startTicks() {
+  try {
+    const es = API.monitor.tickStream(tick => {
+      const color = tick.side === 'B' ? '#10b981' : '#ef4444';
+      const line = `<div style="padding:4px 8px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between"><span class="mono muted">${tick.ts}</span><span class="mono">${tick.symbol}</span><span style="color:${color}">${tick.side} ${tick.qty}</span><span class="mono">${tick.price}</span></div>`;
+      stream.insertAdjacentHTML('afterbegin', line);
+      if (stream.children.length > 80) stream.removeChild(stream.lastChild);
+      tickCount++;
+      document.getElementById('tickCount').textContent = tickCount + ' ticks';
+    });
+    es.onerror = (e) => { console.warn('SSE error', e); };
+  } catch (e) { console.error(e); }
+}
+
+refresh();
+setInterval(refresh, 3000);
+startTicks();
+</script>
+</body>
+</html>

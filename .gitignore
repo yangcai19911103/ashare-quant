@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Data warehouse (本地数据，体积大)
+data_warehouse/
+*.parquet
+*.duckdb
+*.db
+*.sqlite
+_aq_test*.sqlite
+logs/
+
+# Test artifacts (保留 TEST_REPORT.md，忽略具体产物)
+reports/coverage_html/
+reports/api_test_report.html
+reports/junit.xml
+reports/coverage.xml
+
+# Notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Secrets
+.env
+config/secrets.yaml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store

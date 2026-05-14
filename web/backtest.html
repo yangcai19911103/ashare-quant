@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ashare-quant · 策略回测</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <div>
+    <header class="topbar"></header>
+    <main class="main">
+      <div class="page-title">
+        <h1>策略回测</h1>
+        <div><button class="btn">保存配置</button><button class="btn">导出 PDF</button></div>
+      </div>
+      <div class="page-subtitle">POST /api/backtest/run · 三引擎 · A 股 T+1 涨跌停 ST 全规则</div>
+
+      <div class="grid" style="grid-template-columns: 1fr 1.4fr;">
+        <div class="panel">
+          <div class="panel-title">回测配置</div>
+          <div class="form-row"><label>引擎</label>
+            <select id="engine">
+              <option value="event_driven">event_driven (推荐)</option>
+              <option value="vectorbt">vectorbt</option>
+              <option value="qlib">qlib</option>
+            </select>
+          </div>
+          <div class="form-row"><label>策略</label>
+            <select id="strategy"></select>
+          </div>
+          <div class="form-row"><label>股票池</label>
+            <select id="universe"><option value="000300.SH">HS300</option><option value="000905.SH">ZZ500</option><option value="000906.SH">ZZ800</option><option value="ALL">全市场</option></select>
+          </div>
+          <div class="form-row"><label>起始日期</label><input type="date" id="startDate" value="2022-01-01"></div>
+          <div class="form-row"><label>结束日期</label><input type="date" id="endDate" value="2026-05-13"></div>
+          <div class="form-row"><label>初始资金</label><input type="number" id="capital" value="1000000"></div>
+          <div class="form-row"><label>基准</label>
+            <select id="benchmark"><option value="000300.SH">000300.SH 沪深300</option><option value="000905.SH">000905.SH 中证500</option><option value="">无</option></select>
+          </div>
+          <div class="form-row"><label>调仓频率</label>
+            <select id="freq"><option value="M">月度</option><option value="W">周度</option><option value="Q">季度</option><option value="D">每日</option></select>
+          </div>
+          <div class="form-row"><label>手续费(万)</label><input type="number" id="fee" value="2.5" step="0.1"></div>
+          <div class="form-row"><label>滑点(bp)</label><input type="number" id="slip" value="2" step="0.5"></div>
+
+          <div class="divider"></div>
+          <div class="panel-title">策略参数 (JSON)</div>
+          <textarea rows="8" id="params">{
+  "top_n": 30,
+  "weighting": "equal",
+  "stop_loss": -0.10,
+  "take_profit": 0.30,
+  "max_pos_pct": 0.10
+}</textarea>
+          <div class="spacer-md"></div>
+          <button class="btn btn-primary" id="btnRun">▶ 运行回测</button>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">回测进度</div>
+          <div class="row-flex between" style="margin-bottom:6px"><span class="muted" style="font-size:12px">进度</span><span id="bkLabel" class="mono" style="font-size:12px">未开始</span></div>
+          <div class="progress"><div class="bar" id="bkBar" style="width:0%"></div></div>
+          <div class="spacer-md"></div>
+          <pre class="code" id="bkLog">> 等待开始 ...</pre>
+
+          <div class="spacer-md"></div>
+          <div class="panel-title">核心指标</div>
+          <div class="grid cols-3" id="metricsRow">
+            <div class="kpi"><span class="label">总收益</span><span class="value">--</span></div>
+            <div class="kpi"><span class="label">年化收益</span><span class="value">--</span></div>
+            <div class="kpi"><span class="label">夏普</span><span class="value">--</span></div>
+            <div class="kpi"><span class="label">Calmar</span><span class="value">--</span></div>
+            <div class="kpi"><span class="label">最大回撤</span><span class="value">--</span></div>
+            <div class="kpi"><span class="label">胜率</span><span class="value">--</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="panel">
+        <div class="panel-title"><span>净值曲线 + 回撤</span></div>
+        <div style="height:340px"><canvas id="navChart"></canvas></div>
+        <div style="height:120px;margin-top:8px"><canvas id="ddChart"></canvas></div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid cols-2">
+        <div class="panel">
+          <div class="panel-title">月度收益热力图</div>
+          <div id="monthlyHeat" style="display:grid;grid-template-columns:repeat(13,1fr);gap:3px;font-size:10px"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">行业暴露（时间均值）</div>
+          <div style="height:280px"><canvas id="indChart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="panel">
+        <div class="panel-title"><span>交易明细</span></div>
+        <table class="table">
+          <thead><tr><th>日期</th><th>代码</th><th>方向</th><th class="num">数量</th><th class="num">价格</th><th class="num">金额</th><th class="num">手续费</th></tr></thead>
+          <tbody id="tradesBody"><tr><td colspan="7" class="center muted" style="padding:20px">尚无数据</td></tr></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/api.js"></script>
+<script>
+AQ.renderSidebar('backtest.html');
+AQ.renderTopbar('<b>策略回测</b>');
+
+let navChart, ddChart, indChart, pollTimer, currentRunId;
+
+async function loadStrategies() {
+  const arr = await API.strategies.list();
+  document.getElementById('strategy').innerHTML = arr.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+  const qs = new URLSearchParams(window.location.search);
+  const pre = qs.get('strategy');
+  if (pre) document.getElementById('strategy').value = pre;
+}
+
+document.getElementById('btnRun').onclick = async () => {
+  let params = {};
+  try { params = JSON.parse(document.getElementById('params').value || '{}'); }
+  catch (e) { AQ.toast('参数 JSON 错误', 'error'); return; }
+  const body = {
+    strategy: document.getElementById('strategy').value,
+    engine: document.getElementById('engine').value,
+    universe: document.getElementById('universe').value,
+    start_date: document.getElementById('startDate').value,
+    end_date: document.getElementById('endDate').value,
+    init_capital: parseFloat(document.getElementById('capital').value),
+    benchmark: document.getElementById('benchmark').value || null,
+    fee_bps: parseFloat(document.getElementById('fee').value),
+    slippage_bps: parseFloat(document.getElementById('slip').value),
+    rebalance_freq: document.getElementById('freq').value,
+    params: params,
+  };
+  try {
+    const { run_id } = await API.backtest.run(body);
+    currentRunId = run_id;
+    AQ.toast('回测已启动 #' + run_id, 'info');
+    document.getElementById('bkLog').textContent = '> 启动中 ...';
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(pollStatus, 600);
+  } catch (e) {
+    AQ.toast('启动失败: ' + e.message, 'error');
+  }
+};
+
+async function pollStatus() {
+  const s = await API.backtest.status(currentRunId);
+  document.getElementById('bkBar').style.width = s.progress + '%';
+  document.getElementById('bkLabel').textContent = s.current_date || (s.progress + '%');
+  document.getElementById('bkLog').textContent = s.log || '';
+  document.getElementById('bkLog').scrollTop = 1e9;
+  if (s.status === 'finished') {
+    clearInterval(pollTimer);
+    showResults();
+  } else if (s.status === 'failed') {
+    clearInterval(pollTimer);
+    AQ.toast('回测失败', 'error');
+  }
+}
+
+async function showResults() {
+  const r = await API.backtest.result(currentRunId);
+  const m = r.metrics;
+  document.getElementById('metricsRow').innerHTML = [
+    ['总收益', (m.total_return*100).toFixed(2)+'%', m.total_return],
+    ['年化收益', (m.annual_return*100).toFixed(2)+'%', m.annual_return],
+    ['夏普', m.sharpe.toFixed(2), m.sharpe],
+    ['Calmar', m.calmar.toFixed(2), m.calmar],
+    ['最大回撤', (m.max_drawdown*100).toFixed(2)+'%', m.max_drawdown],
+    ['胜率', (m.win_rate*100).toFixed(1)+'%', 1],
+  ].map(([n,v,t]) => `<div class="kpi"><span class="label">${n}</span><span class="value ${t>=0?'pos':'neg'}">${v}</span></div>`).join('');
+
+  if (navChart) navChart.destroy();
+  navChart = new Chart(document.getElementById('navChart'), {
+    type: 'line',
+    data: { labels: r.nav_dates, datasets: [
+      { label: '策略 NAV', data: r.nav_portfolio, borderColor: '#22d3ee', backgroundColor: 'rgba(34,211,238,0.08)', borderWidth: 2, tension: 0.2, pointRadius: 0, fill: true },
+      { label: '基准', data: r.nav_benchmark, borderColor: '#94a3b8', borderWidth: 1.5, tension: 0.2, pointRadius: 0, borderDash: [4,4] },
+    ] }, options: AQ.CHART_DEFAULTS,
+  });
+
+  if (ddChart) ddChart.destroy();
+  ddChart = new Chart(document.getElementById('ddChart'), {
+    type: 'line',
+    data: { labels: r.nav_dates, datasets: [{ label: '回撤', data: r.drawdown.map(v => v*100), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.15)', borderWidth: 1, pointRadius: 0, fill: true }] },
+    options: { ...AQ.CHART_DEFAULTS, plugins: { legend: { display: false } } },
+  });
+
+  if (indChart) indChart.destroy();
+  indChart = new Chart(document.getElementById('indChart'), {
+    type: 'bar',
+    data: {
+      labels: Object.keys(r.industry),
+      datasets: [
+        { label: '策略', data: Object.values(r.industry), backgroundColor: 'rgba(34,211,238,0.7)' },
+        { label: '基准', data: Object.values(r.industry_bench), backgroundColor: 'rgba(148,163,184,0.4)' },
+      ]
+    },
+    options: { ...AQ.CHART_DEFAULTS, indexAxis: 'y' }
+  });
+
+  drawMonthly(r.monthly);
+
+  document.getElementById('tradesBody').innerHTML = (r.trades||[]).map(t =>
+    `<tr><td class="mono">${t.trade_date}</td><td class="mono">${t.symbol}</td>
+     <td>${t.side==='BUY'?'<span class="tag green">买</span>':'<span class="tag red">卖</span>'}</td>
+     <td class="num">${t.qty.toLocaleString()}</td>
+     <td class="num">${t.price.toFixed(2)}</td>
+     <td class="num">${t.amount.toLocaleString()}</td>
+     <td class="num">${t.fee.toFixed(2)}</td></tr>`).join('') || '<tr><td colspan="7" class="center muted" style="padding:20px">无</td></tr>';
+
+  AQ.toast('回测完成 ✓', 'success');
+}
+
+function drawMonthly(monthly) {
+  if (!monthly || !monthly.length) return;
+  const years = [...new Set(monthly.map(m => m.year))].sort();
+  let h = '<div></div>';
+  for (let m = 1; m <= 12; m++) h += `<div style="text-align:center;color:var(--muted)">${m}月</div>`;
+  for (const y of years) {
+    h += `<div style="color:var(--muted)">${y}</div>`;
+    for (let m = 1; m <= 12; m++) {
+      const it = monthly.find(x => x.year === y && x.month === m);
+      const v = it ? it.ret * 100 : null;
+      if (v === null) { h += '<div></div>'; continue; }
+      const c = v > 0 ? `rgba(16,185,129,${Math.min(Math.abs(v)/8, 0.9)})` : `rgba(239,68,68,${Math.min(Math.abs(v)/8, 0.9)})`;
+      h += `<div title="${v.toFixed(1)}%" style="background:${c};color:white;text-align:center;padding:8px 0;border-radius:3px">${v.toFixed(1)}</div>`;
+    }
+  }
+  document.getElementById('monthlyHeat').innerHTML = h;
+}
+
+loadStrategies();
+</script>
+</body>
+</html>

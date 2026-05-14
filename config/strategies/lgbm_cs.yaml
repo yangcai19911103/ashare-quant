@@ -1,0 +1,25 @@
+# LightGBM 横截面（月频）
+strategy: ml.lgbm_cs
+universe: hs300
+params:
+  factors:
+    - mom_3m
+    - mom_6m
+    - rev_1m
+    - low_vol
+    - turnover_20d
+    - ma_cross
+    - rsi_14
+    - bbands_pos
+    - dist_52w_high
+  train_window: 500
+  forward_days: 21
+  top_n: 30
+  rebalance_freq: M
+  num_boost_round: 200
+backtest:
+  start: 2020-01-01
+  end: 2024-12-31
+  initial_cash: 1000000
+  benchmark: 000300.SH
+  adjust: qfq

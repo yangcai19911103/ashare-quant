@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ashare-quant · 总览</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <div>
+    <header class="topbar"></header>
+    <main class="main">
+      <div class="page-title"><h1>总览</h1></div>
+      <div class="page-subtitle">研究、回测、模拟、实盘全链路 A 股量化平台</div>
+
+      <div class="grid cols-4" id="kpiRow"></div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid" style="grid-template-columns: 2fr 1fr;">
+        <div class="panel">
+          <div class="panel-title">
+            <span>组合 NAV 曲线</span>
+            <small>vs 基准</small>
+          </div>
+          <div style="height: 320px;"><canvas id="navChart"></canvas></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">持仓行业分布</div>
+          <div style="height: 320px;"><canvas id="indPie"></canvas></div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid" style="grid-template-columns: 1fr 2fr;">
+        <div class="panel">
+          <div class="panel-title">快速操作</div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
+            <a class="btn btn-primary" href="backtest.html" style="justify-content:center">运行回测</a>
+            <a class="btn" href="data.html" style="justify-content:center">数据更新</a>
+            <a class="btn" href="monitor.html" style="justify-content:center">监控大屏</a>
+            <a class="btn" href="paper.html" style="justify-content:center">启动模拟盘</a>
+            <a class="btn" href="strategies.html" style="justify-content:center">策略库</a>
+            <a class="btn" href="reports.html" style="justify-content:center">查看报告</a>
+          </div>
+          <div class="divider"></div>
+          <div class="panel-title">系统健康度</div>
+          <div id="healthBox" style="display:flex;flex-direction:column;gap:10px;"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title"><span>最近事件 & 告警</span><small>实时</small></div>
+          <table class="table">
+            <thead><tr><th>时间</th><th>级别</th><th>事件</th><th>详情</th></tr></thead>
+            <tbody id="activityBody"><tr><td colspan="4" class="center muted" style="padding:20px">加载中...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="panel">
+        <div class="panel-title"><span>策略表现</span><small>YTD</small></div>
+        <table class="table">
+          <thead>
+            <tr><th>策略</th><th>类别</th><th>状态</th><th class="num">总收益</th><th class="num">年化</th><th class="num">夏普</th><th class="num">最大回撤</th><th class="num">胜率</th><th class="num">换手</th><th></th></tr>
+          </thead>
+          <tbody id="stratBody"><tr><td colspan="10" class="center muted" style="padding:20px">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/api.js"></script>
+<script>
+AQ.renderSidebar('index.html');
+AQ.renderTopbar('<b>总览</b>');
+
+let navChart, indPie;
+
+async function load() {
+  try {
+    const data = await API.overview();
+    renderKpis(data.kpis);
+    renderNav(data.nav_dates, data.nav_portfolio, data.nav_benchmark);
+    renderIndustry(data.industry);
+    renderActivities(data.activities);
+    renderStrategies(data.strategies);
+    renderHealth(data.health);
+  } catch (e) {
+    AQ.toast('加载数据失败: ' + e.message, 'error');
+    console.error(e);
+  }
+}
+
+function renderKpis(kpis) {
+  const icons = ['📊','📈','🎯','⚠️'];
+  document.getElementById('kpiRow').innerHTML = kpis.map((k, i) => `
+    <div class="kpi">
+      <div class="icon-wrap">${icons[i] || ''}</div>
+      <span class="label">${k.label}</span>
+      <span class="value">${k.value}</span>
+      <span class="delta ${k.trend==='up'?'up':(k.trend==='down'?'down':'')}">${k.delta||''}</span>
+    </div>`).join('');
+}
+
+function renderNav(labels, port, bench) {
+  if (navChart) navChart.destroy();
+  navChart = new Chart(document.getElementById('navChart'), {
+    type: 'line',
+    data: { labels, datasets: [
+      { label: '组合 NAV', data: port, borderColor: '#22d3ee', backgroundColor: 'rgba(34,211,238,0.08)', borderWidth: 2, tension: 0.25, pointRadius: 0, fill: true },
+      { label: '基准', data: bench, borderColor: '#94a3b8', borderWidth: 1.5, tension: 0.25, pointRadius: 0, borderDash: [4, 4] },
+    ] },
+    options: AQ.CHART_DEFAULTS,
+  });
+}
+
+function renderIndustry(ind) {
+  if (indPie) indPie.destroy();
+  const labels = Object.keys(ind);
+  const data = Object.values(ind);
+  indPie = new Chart(document.getElementById('indPie'), {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data,
+      backgroundColor: ['#22d3ee','#06b6d4','#0ea5e9','#a78bfa','#10b981','#f59e0b','#ef4444','#6b7280'],
+      borderWidth: 0,
+    }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 11 } } } }, cutout: '60%' }
+  });
+}
+
+function renderActivities(items) {
+  const tag = (l) => l === 'CRIT' ? 'red' : l === 'WARN' ? 'yellow' : 'green';
+  document.getElementById('activityBody').innerHTML = items.map(a =>
+    `<tr><td class="mono">${a.time}</td><td><span class="tag ${tag(a.level)}">${a.level}</span></td><td>${a.event}</td><td>${a.detail}</td></tr>`
+  ).join('') || '<tr><td colspan="4" class="center muted" style="padding:20px">暂无事件</td></tr>';
+}
+
+function renderStrategies(items) {
+  document.getElementById('stratBody').innerHTML = items.map(s => {
+    const stClass = s.status === '运行中' ? 'green' : 'gray';
+    const ret = (s.total_return || 0);
+    return `<tr>
+      <td><b>${s.name}</b></td>
+      <td><span class="tag purple">${s.category}</span></td>
+      <td><span class="tag ${stClass}">${s.status}</span></td>
+      <td class="num ${ret>=0?'pos':'neg'}">${(ret*100).toFixed(2)}%</td>
+      <td class="num ${s.annual_return>=0?'pos':'neg'}">${(s.annual_return*100).toFixed(2)}%</td>
+      <td class="num">${s.sharpe.toFixed(2)}</td>
+      <td class="num neg">${(s.max_drawdown*100).toFixed(2)}%</td>
+      <td class="num">${(s.win_rate*100).toFixed(0)}%</td>
+      <td class="num">${s.turnover.toFixed(1)}x</td>
+      <td><a class="btn btn-sm" href="reports.html">查看</a></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="10" class="center muted" style="padding:20px">无</td></tr>';
+}
+
+function renderHealth(h) {
+  document.getElementById('healthBox').innerHTML = [
+    ['数据完整度', h.data_completeness, '%'],
+    ['磁盘使用',  h.disk_usage_pct, '%'],
+    ['Tushare 配额', h.tushare_quota_pct, '%'],
+  ].map(([n, v, u]) => `
+    <div>
+      <div class="row-flex between" style="margin-bottom:4px"><span class="muted" style="font-size:12px">${n}</span><span style="font-size:12px">${v.toFixed(1)}${u}</span></div>
+      <div class="progress"><div class="bar" style="width:${v}%"></div></div>
+    </div>`).join('');
+}
+
+load();
+setInterval(load, 30000);  // 30秒刷新
+</script>
+</body>
+</html>

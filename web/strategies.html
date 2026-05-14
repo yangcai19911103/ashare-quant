@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ashare-quant · 策略库</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <div>
+    <header class="topbar"></header>
+    <main class="main">
+      <div class="page-title"><h1>策略库</h1></div>
+      <div class="page-subtitle">GET /api/strategies/ · 全部支持 A 股 T+1 / 涨跌停 / ST 规则</div>
+
+      <div class="tabs" id="tabs">
+        <button class="active" data-cat="all">全部</button>
+        <button data-cat="多因子">多因子</button>
+        <button data-cat="CTA">CTA</button>
+        <button data-cat="套利">套利</button>
+        <button data-cat="事件">事件</button>
+        <button data-cat="机器学习">机器学习</button>
+        <button data-cat="轮动">轮动</button>
+        <button data-cat="组合优化">组合优化</button>
+      </div>
+
+      <div class="grid cols-3" id="grid"></div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/api.js"></script>
+<script>
+AQ.renderSidebar('strategies.html');
+AQ.renderTopbar('<b>策略库</b>');
+
+const CAT_COLOR = { '多因子':'purple', 'CTA':'', '套利':'green', '事件':'yellow', '机器学习':'', '轮动':'', '组合优化':'gray' };
+let allItems = [];
+
+async function load() {
+  try {
+    allItems = await API.strategies.list();
+    render('all');
+  } catch (e) {
+    AQ.toast('加载策略失败: ' + e.message, 'error');
+  }
+}
+
+function render(cat) {
+  const items = cat === 'all' ? allItems : allItems.filter(s => s.category === cat);
+  document.getElementById('grid').innerHTML = items.map(s => `
+    <div class="strat-card">
+      <div class="row-flex between">
+        <div>
+          <div class="strat-name">${s.cn_name || s.name}</div>
+          <div class="mono muted" style="font-size:11.5px">${s.name}</div>
+        </div>
+        <span class="tag ${CAT_COLOR[s.category]||''}">${s.category}</span>
+      </div>
+      <div class="strat-desc">${s.description || ''}</div>
+      <div class="strat-meta">
+        ${s.freq?`<span class="tag gray">频率: ${s.freq}</span>`:''}
+        ${s.risk_level?`<span class="tag gray">风险: ${s.risk_level}</span>`:''}
+      </div>
+      <div class="row-flex" style="margin-top:8px">
+        <a href="backtest.html?strategy=${encodeURIComponent(s.name)}" class="btn btn-sm btn-primary">回测</a>
+        <a href="paper.html?strategy=${encodeURIComponent(s.name)}" class="btn btn-sm">模拟盘</a>
+      </div>
+    </div>`).join('');
+}
+
+document.querySelectorAll('#tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#tabs button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    render(b.dataset.cat);
+  };
+});
+
+load();
+</script>
+</body>
+</html>

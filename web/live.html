@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ashare-quant · 实盘交易</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <div>
+    <header class="topbar"></header>
+    <main class="main">
+      <div class="page-title">
+        <h1>实盘交易</h1>
+        <div>
+          <button class="btn btn-success" id="btnConnect">连接 QMT</button>
+          <button class="btn btn-danger" id="btnHalt">⚠ 紧急止损</button>
+        </div>
+      </div>
+      <div class="page-subtitle">POST /api/live/qmt/connect · 双人审批 · 三道风控强制启用</div>
+
+      <div class="grid cols-4" id="kpiRow"></div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid" style="grid-template-columns: 1fr 1fr;">
+        <div class="panel">
+          <div class="panel-title">QMT 客户端配置</div>
+          <div class="form-row"><label>券商</label>
+            <select id="broker">
+              <option>华泰证券</option><option>国泰君安</option><option>中泰证券</option><option>东方财富</option><option>中信证券</option>
+            </select>
+          </div>
+          <div class="form-row"><label>QMT 路径</label><input type="text" id="qmtPath" value="D:\\国金QMT交易端\\userdata_mini"></div>
+          <div class="form-row"><label>账户 ID</label><input type="text" id="qmtAcct" value="****1234"></div>
+          <div class="form-row"><label>账户类型</label>
+            <select id="acctType"><option value="STOCK">普通账户</option><option value="CREDIT">融资融券</option><option value="OPTION">期权</option></select>
+          </div>
+          <div class="spacer-md"></div>
+          <button class="btn btn-primary" id="btnConnect2">▶ 连接</button>
+          <button class="btn" id="btnDisc">断开</button>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">策略部署</div>
+          <table class="table">
+            <thead><tr><th>策略</th><th>资金</th><th>状态</th><th></th></tr></thead>
+            <tbody id="depBody"><tr><td colspan="4" class="center muted" style="padding:20px">加载中...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid" style="grid-template-columns: 1.2fr 1fr;">
+        <div class="panel">
+          <div class="panel-title"><span>手动下单</span><small>需双人审批</small></div>
+          <div class="grid cols-4">
+            <div><label class="muted" style="font-size:12px">代码</label><input type="text" id="o_sym" placeholder="600519.SH"></div>
+            <div><label class="muted" style="font-size:12px">方向</label><select id="o_side"><option>BUY</option><option>SELL</option></select></div>
+            <div><label class="muted" style="font-size:12px">数量</label><input type="number" id="o_qty" value="100" step="100"></div>
+            <div><label class="muted" style="font-size:12px">类型</label>
+              <select id="o_type"><option value="MKT">市价</option><option value="LMT">限价</option><option value="TWAP">TWAP</option><option value="VWAP">VWAP</option><option value="ICEBERG">冰山</option></select>
+            </div>
+            <div><label class="muted" style="font-size:12px">价格</label><input type="number" id="o_price" value="" placeholder="可选"></div>
+          </div>
+          <div class="spacer-md"></div>
+          <button class="btn btn-primary" id="btnOrder">▶ 发起订单</button>
+          <button class="btn" id="btnEst">预估成本</button>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title"><span>待审批订单</span></div>
+          <table class="table">
+            <thead><tr><th>时间</th><th>代码</th><th>方向</th><th class="num">数量</th><th>类型</th><th></th></tr></thead>
+            <tbody id="apprBody"><tr><td colspan="6" class="center muted" style="padding:20px">暂无待审批</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="panel">
+        <div class="panel-title">实盘日志</div>
+        <pre class="code" id="liveLog">> 等待 QMT 连接 ...</pre>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/api.js"></script>
+<script>
+AQ.renderSidebar('live.html');
+AQ.renderTopbar('<b>实盘交易</b>');
+
+async function loadStatus() {
+  const s = await API.live.status();
+  const acc = await API.live.account();
+  document.getElementById('kpiRow').innerHTML = [
+    ['QMT 状态', s.connected ? '<span class="tag green">已连接</span>' : '<span class="tag yellow">未连接</span>', s.broker || '-'],
+    ['账户', s.account || '-', s.connected ? '正常' : '等待连接'],
+    ['实盘总资产', acc ? '¥'+AQ.fmt(acc.total_asset) : '--', acc?'今日盈亏 ¥'+AQ.fmt(acc.today_pnl):''],
+    ['待审批订单', s.pending_approvals, s.pending_approvals>0?'有待处理':'-'],
+  ].map(([n,v,d]) => `<div class="kpi"><span class="label">${n}</span><span class="value">${v}</span><span class="delta muted">${d}</span></div>`).join('');
+}
+
+async function loadDeployments() {
+  const arr = await API.live.deployments();
+  document.getElementById('depBody').innerHTML = arr.map(d => {
+    const tag = d.status === 'running' ? 'green' : 'gray';
+    return `<tr><td>${d.strategy}</td><td class="mono">¥${d.capital.toLocaleString()}</td>
+      <td><span class="tag ${tag}">${d.status}</span></td>
+      <td>
+        <button class="btn btn-sm btn-success" onclick="dep('${d.strategy}','start')">启动</button>
+        <button class="btn btn-sm btn-danger" onclick="dep('${d.strategy}','stop')">停止</button>
+      </td></tr>`;
+  }).join('');
+}
+async function dep(s, a) {
+  try { await API.live.deploy(s, a); AQ.toast(`${s} ${a} 成功`, 'success'); loadDeployments(); loadStatus(); }
+  catch (e) { AQ.toast('失败: ' + e.message, 'error'); }
+}
+window.dep = dep;
+
+async function loadApprovals() {
+  const arr = await API.live.approvals();
+  if (!arr.length) { document.getElementById('apprBody').innerHTML = '<tr><td colspan="6" class="center muted" style="padding:20px">暂无待审批</td></tr>'; return; }
+  document.getElementById('apprBody').innerHTML = arr.map(a => `
+    <tr><td class="mono">${new Date(a.ts).toLocaleTimeString('zh-CN',{hour12:false})}</td>
+        <td class="mono">${a.symbol}</td>
+        <td>${a.side==='BUY'?'<span class="tag green">买</span>':'<span class="tag red">卖</span>'}</td>
+        <td class="num">${a.qty}</td>
+        <td>${a.order_type}</td>
+        <td>
+          <button class="btn btn-sm btn-success" onclick="appr('${a.id}','approve')">通过</button>
+          <button class="btn btn-sm btn-danger" onclick="appr('${a.id}','reject')">拒绝</button>
+        </td></tr>`).join('');
+}
+async function appr(id, action) {
+  try {
+    if (action === 'approve') await API.live.approve(id);
+    else await API.live.reject(id);
+    AQ.toast(`已${action==='approve'?'通过':'拒绝'}`, action==='approve'?'success':'warn');
+    loadApprovals(); loadStatus();
+  } catch (e) { AQ.toast('失败: ' + e.message, 'error'); }
+}
+window.appr = appr;
+
+async function connect() {
+  document.getElementById('liveLog').textContent = '> 连接 QMT ...';
+  try {
+    await API.live.connect({
+      broker: document.getElementById('broker').value,
+      qmt_path: document.getElementById('qmtPath').value,
+      account: document.getElementById('qmtAcct').value,
+      account_type: document.getElementById('acctType').value,
+    });
+    AQ.toast('连接已提交', 'info');
+    // 轮询日志
+    const t = setInterval(async () => {
+      const alerts = (await API.risk.alerts()).filter(a => a.source === 'qmt');
+      document.getElementById('liveLog').textContent = alerts.slice().reverse().map(a => '> ' + a.title + ' - ' + (a.message||'')).join('\n');
+      const s = await API.live.status();
+      if (s.connected) { clearInterval(t); loadStatus(); AQ.toast('QMT 已连接 ✓', 'success'); }
+    }, 800);
+  } catch (e) { AQ.toast('连接失败: ' + e.message, 'error'); }
+}
+
+document.getElementById('btnConnect').onclick = connect;
+document.getElementById('btnConnect2').onclick = connect;
+document.getElementById('btnDisc').onclick = async () => { await API.live.disconnect(); AQ.toast('已断开'); loadStatus(); };
+document.getElementById('btnHalt').onclick = async () => { if (confirm('确认紧急止损所有策略？')) { await API.risk.halt(); AQ.toast('已紧急止损','warn'); } };
+
+document.getElementById('btnOrder').onclick = async () => {
+  const body = {
+    symbol: document.getElementById('o_sym').value || '600519.SH',
+    side: document.getElementById('o_side').value,
+    qty: parseInt(document.getElementById('o_qty').value),
+    order_type: document.getElementById('o_type').value,
+    price: parseFloat(document.getElementById('o_price').value) || null,
+  };
+  try { await API.live.order(body); AQ.toast('订单已发起，待双人审批','warn'); loadApprovals(); loadStatus(); }
+  catch (e) { AQ.toast('失败: ' + e.message, 'error'); }
+};
+
+document.getElementById('btnEst').onclick = async () => {
+  const body = {
+    symbol: document.getElementById('o_sym').value || '600519.SH',
+    side: document.getElementById('o_side').value,
+    qty: parseInt(document.getElementById('o_qty').value),
+    order_type: document.getElementById('o_type').value,
+    price: parseFloat(document.getElementById('o_price').value) || null,
+  };
+  const r = await API.live.estimate(body);
+  AQ.toast(`金额 ¥${r.amount.toFixed(2)} | 手续费 ¥${r.fee} | 印花税 ¥${r.stamp}`, 'info');
+};
+
+loadStatus();
+loadDeployments();
+loadApprovals();
+setInterval(() => { loadStatus(); loadApprovals(); }, 4000);
+</script>
+</body>
+</html>

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ashare-quant · 风控</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <div>
+    <header class="topbar"></header>
+    <main class="main">
+      <div class="page-title"><h1>风控配置</h1></div>
+      <div class="page-subtitle">GET/POST /api/risk/config · 三道防线 · 实时告警 · 归因</div>
+
+      <div class="grid cols-4" id="kpiRow"></div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid" style="grid-template-columns: 1fr 1fr;">
+        <div class="panel">
+          <div class="panel-title"><span>① 盘前 (pre_trade)</span></div>
+          <div id="preFields" class="form-grid cols-2"></div>
+          <div id="preChecks" class="row-flex wrap" style="gap:14px;margin-top:10px"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><span>② 盘中 (in_trade)</span></div>
+          <div id="inFields" class="form-grid cols-2"></div>
+          <div id="inChecks" class="row-flex wrap" style="gap:14px;margin-top:10px"></div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid cols-2">
+        <div class="panel">
+          <div class="panel-title"><span>③ 盘后 (post_trade)</span></div>
+          <div id="postFields" class="form-grid cols-2"></div>
+          <div id="postChecks" class="row-flex wrap" style="gap:14px;margin-top:10px"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title"><span>告警通道</span></div>
+          <table class="table">
+            <thead><tr><th>通道</th><th>状态</th><th>级别</th><th></th></tr></thead>
+            <tbody id="channelBody"><tr><td colspan="4" class="center muted" style="padding:20px">加载中...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid" style="grid-template-columns: 1.4fr 1fr;">
+        <div class="panel">
+          <div class="panel-title"><span>组合回撤监控</span></div>
+          <div style="height:280px"><canvas id="ddChart"></canvas></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><span>当前告警</span><small><span class="tag red" id="alertCount">0</span></small></div>
+          <div class="scroll-y" id="alertBox"></div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="panel">
+        <div class="panel-title"><span>风险归因（Brinson）</span></div>
+        <div class="grid cols-2">
+          <table class="table">
+            <thead><tr><th>来源</th><th class="num">配置效应</th><th class="num">选股效应</th><th class="num">交互</th><th class="num">合计</th></tr></thead>
+            <tbody id="attrBody"><tr><td colspan="5" class="center muted" style="padding:20px">加载中...</td></tr></tbody>
+          </table>
+          <div style="height:280px"><canvas id="attrChart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="row-flex">
+        <button class="btn btn-primary" id="btnSave">保存全部配置</button>
+        <button class="btn" id="btnReload">恢复</button>
+        <button class="btn btn-danger" id="btnHalt">⚠ 紧急暂停所有策略</button>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/api.js"></script>
+<script>
+AQ.renderSidebar('risk.html');
+AQ.renderTopbar('<b>风控配置</b>');
+
+const FIELD_LABELS = {
+  max_single_position_pct: '单股最大持仓占比 %',
+  max_industry_pct: '单行业最大占比 %',
+  max_order_amount_wan: '单笔最大金额(万)',
+  max_volume_share_pct: '单笔最大成交量占比 %',
+  min_adv_wan: '最低 ADV (万)',
+  min_market_cap_yi: '单股最低市值(亿)',
+  stop_loss_pct: '个股止损 %',
+  take_profit_pct: '个股止盈 %',
+  trailing_stop_pct: '移动止损回撤 %',
+  daily_loss_pct: '单日亏损上限 %',
+  max_cum_drawdown_pct: '最大累计回撤 %',
+  drawdown_pause_days: '回撤暂停天数',
+  consecutive_loss_alert: '连续亏损告警天数',
+  monthly_underperf_alert_pct: '月度跑输基准 %',
+};
+const CHECK_LABELS = {
+  deny_limit_up_buy: '拒绝涨停买入',
+  deny_limit_down_sell: '拒绝跌停卖出',
+  deny_st: '拒绝 ST',
+  deny_new_60d: '拒绝新股 60 日',
+  t1_check: 'T+1 校验',
+  auto_close_on_stop: '止损自动平仓',
+  pause_on_daily_loss: '单日亏损暂停下单',
+  alert_abnormal_fill: '异常成交告警',
+  pause_new_position: '回撤暂停新仓',
+  daily_report_wechat: '日报到企微',
+  weekly_report_email: '周报到邮件',
+};
+
+let cfg;
+
+function buildFields(scope, fields, checks) {
+  const o = cfg[scope] || {};
+  const f = [];
+  const c = [];
+  for (const [k, v] of Object.entries(o)) {
+    if (typeof v === 'boolean') {
+      c.push(`<label class="checkbox"><input type="checkbox" data-scope="${scope}" data-key="${k}" ${v?'checked':''}> ${CHECK_LABELS[k]||k}</label>`);
+    } else {
+      f.push(`<div><label class="muted" style="font-size:12px">${FIELD_LABELS[k]||k}</label><input type="number" data-scope="${scope}" data-key="${k}" value="${v}" step="0.5"></div>`);
+    }
+  }
+  fields.innerHTML = f.join('');
+  checks.innerHTML = c.join('');
+}
+
+async function loadConfig() {
+  cfg = await API.risk.getConfig();
+  buildFields('pre_trade', document.getElementById('preFields'), document.getElementById('preChecks'));
+  buildFields('in_trade', document.getElementById('inFields'), document.getElementById('inChecks'));
+  buildFields('post_trade', document.getElementById('postFields'), document.getElementById('postChecks'));
+}
+
+async function loadAlerts() {
+  const arr = await API.risk.alerts();
+  const active = arr.filter(a => !a.resolved);
+  document.getElementById('alertCount').textContent = active.length + ' 活跃';
+  const color = { 'INFO':'var(--green)', 'WARN':'var(--yellow)', 'CRIT':'var(--red)' };
+  document.getElementById('alertBox').innerHTML = arr.map(a => `
+    <div style="padding:10px;border-left:3px solid ${color[a.level]||'var(--green)'};background:rgba(255,255,255,0.02);border-radius:4px;margin-bottom:8px">
+      <div class="row-flex between"><b>${a.title}</b><span class="tag ${a.level==='CRIT'?'red':(a.level==='WARN'?'yellow':'green')}">${a.level}</span></div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${a.message||''}</div>
+      <div class="muted mono" style="font-size:11px;margin-top:4px">${new Date(a.ts).toLocaleString('zh-CN', {hour12:false})}</div>
+    </div>`).join('');
+
+  // KPI
+  document.getElementById('kpiRow').innerHTML = [
+    ['当前最大回撤', '-3.20%', '阈值 -15%', 'up'],
+    ['今日单日 P&L', '+0.32%', '阈值 ±5%', ''],
+    ['最大单仓占比', '8.5%', '阈值 10%', ''],
+    ['活跃告警', active.length, active.length>0?'有未处理':'安全', active.length>0?'down':'up'],
+  ].map(([n,v,d,t]) => `<div class="kpi"><span class="label">${n}</span><span class="value">${v}</span><span class="delta ${t}">${d}</span></div>`).join('');
+}
+
+async function loadChannels() {
+  const arr = await API.risk.channels();
+  document.getElementById('channelBody').innerHTML = arr.map(c =>
+    `<tr><td>${c.name}</td>
+     <td><span class="tag ${c.enabled?'green':'gray'}">${c.enabled?'已配置':'未配置'}</span></td>
+     <td>${c.min_level}+</td>
+     <td><button class="btn btn-sm" onclick='testCh(${JSON.stringify(c.name)})'>测试</button></td></tr>`).join('');
+}
+async function testCh(name) {
+  try { await API.risk.testChannel(name); AQ.toast('测试消息已发送到 ' + name, 'success'); }
+  catch (e) { AQ.toast('失败: ' + e.message, 'error'); }
+}
+window.testCh = testCh;
+
+async function loadDrawdown() {
+  const r = await API.risk.drawdown();
+  new Chart(document.getElementById('ddChart'), {
+    type: 'line',
+    data: { labels: r.dates, datasets: [
+      { label: '回撤 %', data: r.drawdown, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.15)', borderWidth: 1, pointRadius: 0, fill: true },
+      { label: '阈值', data: r.dates.map(() => r.threshold), borderColor: '#f59e0b', borderDash: [4,4], borderWidth: 1, pointRadius: 0 },
+    ] }, options: AQ.CHART_DEFAULTS,
+  });
+}
+
+async function loadAttribution() {
+  const r = await API.risk.attribution();
+  document.getElementById('attrBody').innerHTML = r.rows.map(x =>
+    `<tr><td>${x.sector}</td>
+     <td class="num ${x.allocation>=0?'pos':'neg'}">${x.allocation>=0?'+':''}${x.allocation.toFixed(2)}%</td>
+     <td class="num ${x.selection>=0?'pos':'neg'}">${x.selection>=0?'+':''}${x.selection.toFixed(2)}%</td>
+     <td class="num">${x.interaction.toFixed(2)}%</td>
+     <td class="num ${x.total>=0?'pos':'neg'}">${x.total>=0?'+':''}${x.total.toFixed(2)}%</td></tr>`).join('') +
+    `<tr style="font-weight:600"><td colspan="4">合计超额</td><td class="num pos">+${r.total_excess.toFixed(2)}%</td></tr>`;
+  new Chart(document.getElementById('attrChart'), {
+    type: 'bar',
+    data: { labels: r.rows.map(x => x.sector), datasets: [
+      { label: '配置', data: r.rows.map(x => x.allocation), backgroundColor: 'rgba(34,211,238,0.7)' },
+      { label: '选股', data: r.rows.map(x => x.selection), backgroundColor: 'rgba(16,185,129,0.7)' },
+    ] },
+    options: { ...AQ.CHART_DEFAULTS, scales: { x: { ...AQ.CHART_DEFAULTS.scales.x, stacked: true }, y: { ...AQ.CHART_DEFAULTS.scales.y, stacked: true } } }
+  });
+}
+
+document.getElementById('btnSave').onclick = async () => {
+  // 收集所有字段
+  const data = JSON.parse(JSON.stringify(cfg));
+  document.querySelectorAll('input[data-scope]').forEach(el => {
+    const s = el.dataset.scope, k = el.dataset.key;
+    if (el.type === 'checkbox') data[s][k] = el.checked;
+    else data[s][k] = parseFloat(el.value);
+  });
+  try { await API.risk.saveConfig(data); AQ.toast('配置已保存', 'success'); cfg = data; }
+  catch (e) { AQ.toast('保存失败: ' + e.message, 'error'); }
+};
+document.getElementById('btnReload').onclick = loadConfig;
+document.getElementById('btnHalt').onclick = async () => {
+  if (!confirm('确认紧急暂停所有策略？')) return;
+  try { await API.risk.halt(); AQ.toast('已暂停全部策略', 'warn'); }
+  catch (e) { AQ.toast('失败: ' + e.message, 'error'); }
+};
+
+loadConfig();
+loadAlerts();
+loadChannels();
+loadDrawdown();
+loadAttribution();
+</script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ashare-quant"
+version = "0.1.0"
+description = "A股全栈量化平台：研究→回测→模拟→实盘"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "ashare-quant" }]
+
+dependencies = [
+    # 数据
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+    "duckdb>=0.10",
+    "akshare>=1.12",
+    "tushare>=1.4",
+    "efinance>=0.5",
+    # MySQL 存储层
+    "sqlalchemy>=2.0",
+    "pymysql>=1.1",
+    "cryptography>=41.0",
+    # Web 后端
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "psutil>=5.9",
+    # 工程
+    "pyyaml>=6.0",
+    "loguru>=0.7",
+    "apscheduler>=3.10",
+    "tenacity>=8.2",
+    "tqdm>=4.66",
+    "click>=8.1",
+    "pydantic>=2.5",
+    "python-dateutil>=2.8",
+    # 计算
+    "scipy>=1.11",
+    "scikit-learn>=1.3",
+    "statsmodels>=0.14",
+    # 回测加速（可选）
+    "numba>=0.58",
+]
+
+[project.optional-dependencies]
+ml = [
+    "lightgbm>=4.0",
+    "xgboost>=2.0",
+    "torch>=2.0",
+]
+opt = [
+    "cvxpy>=1.4",
+    "riskfolio-lib>=4.4",
+]
+vectorbt = ["vectorbt>=0.26"]
+qlib = ["pyqlib>=0.9"]
+live = [
+    "vnpy>=3.9",
+]
+ui = [
+    "streamlit>=1.30",
+    "dash>=2.15",
+    "plotly>=5.18",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.1",
+    "mypy>=1.7",
+    "ipykernel>=6.27",
+    "jupyterlab>=4.0",
+]
+full = [
+    "ashare-quant[ml,opt,vectorbt,ui,dev]",
+]
+
+[project.scripts]
+aq = "ashare_quant.cli:main"
+aq-data = "ashare_quant.cli.data:cli"
+aq-backtest = "ashare_quant.cli.backtest:cli"
+aq-live = "ashare_quant.cli.live:cli"
+aq-api = "ashare_quant.api.main:main"
+aq-init-db = "ashare_quant.api.seed:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ashare_quant*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"

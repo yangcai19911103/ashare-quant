@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ashare-quant · 数据管理</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <div>
+    <header class="topbar"></header>
+    <main class="main">
+      <div class="page-title"><h1>数据管理</h1></div>
+      <div class="page-subtitle">采集 / MySQL 存储 / 交易日历 / Universe / 数据查询</div>
+
+      <div class="grid cols-4" id="sourcesRow"></div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid" style="grid-template-columns: 1.4fr 1fr;">
+        <div class="panel">
+          <div class="panel-title"><span>数据初始化 / 全量拉取</span><small>POST /api/data/init</small></div>
+          <div class="form-grid cols-2">
+            <div><label class="muted" style="font-size:12px">起始日期</label><input type="date" id="startDate" value="2018-01-01"></div>
+            <div><label class="muted" style="font-size:12px">结束日期</label><input type="date" id="endDate" value="2026-05-14"></div>
+            <div>
+              <label class="muted" style="font-size:12px">数据源优先级</label>
+              <select id="sourceOrder">
+                <option value="akshare,efinance,tushare">akshare → efinance → tushare</option>
+                <option value="tushare,akshare">tushare → akshare</option>
+                <option value="akshare">仅 akshare</option>
+                <option value="mock">仅 mock (离线测试)</option>
+              </select>
+            </div>
+            <div><label class="muted" style="font-size:12px">并发线程</label>
+              <select id="workers"><option>6</option><option>4</option><option>8</option><option>12</option></select>
+            </div>
+          </div>
+          <div class="spacer-sm"></div>
+          <div class="row-flex wrap" style="gap: 18px;">
+            <label class="checkbox"><input type="checkbox" data-opt="stocks" checked> 全市场股票</label>
+            <label class="checkbox"><input type="checkbox" data-opt="index_members" checked> 指数成分</label>
+            <label class="checkbox"><input type="checkbox" data-opt="north_flow" checked> 北向资金</label>
+            <label class="checkbox"><input type="checkbox" data-opt="dragon_tiger"> 龙虎榜</label>
+            <label class="checkbox"><input type="checkbox" data-opt="fundamental"> 财报数据</label>
+            <label class="checkbox"><input type="checkbox" data-opt="minute"> 分钟K线</label>
+          </div>
+          <div class="spacer-md"></div>
+          <button class="btn btn-primary" id="btnInit">▶ 开始初始化</button>
+          <button class="btn">取消</button>
+          <div class="spacer-md"></div>
+          <div id="initProgress" style="display:none;">
+            <div class="row-flex between" style="margin-bottom:6px"><span class="muted" style="font-size:12px">进度</span><span id="progLabel" class="mono" style="font-size:12px">0%</span></div>
+            <div class="progress"><div class="bar" id="progBar" style="width:0%"></div></div>
+            <div class="spacer-sm"></div>
+            <pre class="code" id="initLog">等待开始...</pre>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">数据仓库统计 (MySQL)</div>
+          <table class="table">
+            <tbody id="warehouseTbody"><tr><td colspan="2" class="center muted" style="padding:20px">加载中...</td></tr></tbody>
+          </table>
+          <div class="spacer-md"></div>
+          <button class="btn" onclick="AQ.toast('已重建索引','success')">重建索引</button>
+          <button class="btn" onclick="AQ.toast('已生成完整性报告','success')">完整性检查</button>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid cols-2">
+        <div class="panel">
+          <div class="panel-title"><span>每日增量任务</span><small>GET /api/data/jobs</small></div>
+          <p class="muted" style="font-size:13px">盘后 17:30 自动调度。非交易日自动跳过。</p>
+          <table class="table">
+            <thead><tr><th>任务</th><th>上次执行</th><th>状态</th><th></th></tr></thead>
+            <tbody id="jobsBody"><tr><td colspan="4" class="center muted" style="padding:20px">加载中...</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title"><span>交易日历</span><small>GET /api/data/calendar</small></div>
+          <div class="form-grid cols-2">
+            <div><label class="muted" style="font-size:12px">查询日期</label><input type="date" id="calDate" value="2026-05-14"></div>
+            <div><label class="muted" style="font-size:12px">偏移</label>
+              <select id="calOffset">
+                <option value="0">当日</option><option value="-1">前 1 个交易日</option>
+                <option value="-5">前 5 个交易日</option><option value="1">后 1 个交易日</option>
+                <option value="5">后 5 个交易日</option>
+              </select>
+            </div>
+          </div>
+          <div class="spacer-sm"></div>
+          <button class="btn" id="btnCal">查询</button>
+          <div class="spacer-md"></div>
+          <div class="row-flex" id="calStats" style="gap:24px"></div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="panel">
+        <div class="panel-title"><span>股票池 (Universe)</span><small>POST /api/data/universe</small></div>
+        <div class="row-flex wrap" style="gap: 12px;">
+          <select id="uniIdx" style="width:180px">
+            <option value="000300.SH">HS300 沪深300</option>
+            <option value="000905.SH">ZZ500 中证500</option>
+            <option value="000906.SH">ZZ800</option>
+            <option value="000852.SH">ZZ1000</option>
+            <option value="ALL">全市场</option>
+          </select>
+          <input type="date" id="uniDate" style="width:160px" value="2026-05-14">
+          <label class="checkbox"><input type="checkbox" id="uniSt" checked> 剔除 ST</label>
+          <label class="checkbox"><input type="checkbox" id="uniSusp" checked> 剔除停牌</label>
+          <label class="checkbox"><input type="checkbox" id="uniNew" checked> 剔除新股 60 日</label>
+          <button class="btn btn-primary" id="btnUni">构建股票池</button>
+          <button class="btn" onclick="AQ.toast('已导出 CSV','success')">导出 CSV</button>
+        </div>
+        <div class="spacer-md"></div>
+        <table class="table">
+          <thead><tr><th>代码</th><th>名称</th><th>行业</th><th>上市日期</th><th class="num">市值(亿)</th><th class="num">最新价</th><th class="num">PE TTM</th><th>状态</th></tr></thead>
+          <tbody id="uniBody"><tr><td colspan="8" class="center muted" style="padding:20px">点击"构建股票池"开始</td></tr></tbody>
+        </table>
+        <div class="row-flex between" style="margin-top:10px">
+          <span class="muted" style="font-size:12.5px" id="uniCount">0 只</span>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="panel">
+        <div class="panel-title"><span>数据查询 (MySQL SQL)</span><small>POST /api/data/query</small></div>
+        <textarea rows="5" id="sqlText" style="font-family:'JetBrains Mono',monospace">SELECT symbol, trade_date, close, volume, amount
+FROM daily_bar
+WHERE symbol = '600519.SH'
+  AND trade_date BETWEEN '2024-01-01' AND '2024-12-31'
+ORDER BY trade_date DESC
+LIMIT 10;</textarea>
+        <div class="spacer-sm"></div>
+        <button class="btn btn-primary" id="btnSql">▶ 执行</button>
+        <div class="spacer-md"></div>
+        <div id="sqlResult"></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/api.js"></script>
+<script>
+AQ.renderSidebar('data.html');
+AQ.renderTopbar('数据管理 / <b>仪表盘</b>');
+
+async function loadSources() {
+  const arr = await API.data.sources();
+  document.getElementById('sourcesRow').innerHTML = arr.map(s => {
+    const ok = s.status === 'ok';
+    return `<div class="kpi">
+      <span class="label">${s.name}</span>
+      <span class="value">${ok ? '✓' : '○'}</span>
+      <span class="delta ${ok?'up':'muted'}">${s.note || ''} ${s.quota_limit ? `· ${s.quota_used}/${s.quota_limit}` : ''}</span>
+    </div>`;
+  }).join('');
+}
+
+async function loadWarehouse() {
+  const w = await API.data.warehouse();
+  const rows = [
+    ['股票总数', w.instruments.toLocaleString()],
+    ['日 K 行数', w.daily_rows.toLocaleString()],
+    ['最早日期', w.earliest],
+    ['最新日期', w.latest],
+    ['缺失/异常股票', `<span class="tag yellow">${w.missing}</span>`],
+    ['磁盘占用 (MB)', w.size_mb.toFixed(0)],
+  ];
+  document.getElementById('warehouseTbody').innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td class="num">${r[1]}</td></tr>`).join('');
+}
+
+async function loadJobs() {
+  const arr = await API.data.jobs();
+  document.getElementById('jobsBody').innerHTML = arr.slice(0, 10).map(j => {
+    const tag = j.status === 'success' ? 'green' : (j.status === 'partial' ? 'yellow' : 'red');
+    const t = j.finished_at ? new Date(j.finished_at).toLocaleString('zh-CN', { hour12: false }) : (j.started_at || '-');
+    return `<tr><td>${j.job_type}</td><td class="mono">${t}</td><td><span class="tag ${tag}">${j.status}</span></td><td><button class="btn btn-sm" onclick="AQ.toast('已触发','success')">手动触发</button></td></tr>`;
+  }).join('');
+}
+
+document.getElementById('btnInit').onclick = async () => {
+  const opts = {};
+  document.querySelectorAll('[data-opt]').forEach(c => opts[c.dataset.opt] = c.checked);
+  const body = {
+    start_date: document.getElementById('startDate').value,
+    end_date: document.getElementById('endDate').value,
+    sources: document.getElementById('sourceOrder').value.split(','),
+    workers: parseInt(document.getElementById('workers').value),
+    options: opts,
+  };
+  const { job_id } = await API.data.init(body);
+  document.getElementById('initProgress').style.display = 'block';
+  AQ.toast('初始化任务已启动 #' + job_id, 'info');
+  const poll = setInterval(async () => {
+    const j = await API.data.job(job_id);
+    document.getElementById('progBar').style.width = j.progress + '%';
+    document.getElementById('progLabel').textContent = j.progress + '%';
+    document.getElementById('initLog').textContent = j.log || '';
+    document.getElementById('initLog').scrollTop = 1e9;
+    if (j.status === 'success' || j.status === 'failed') {
+      clearInterval(poll);
+      AQ.toast('任务' + (j.status === 'success' ? '完成 ✓' : '失败'), j.status === 'success' ? 'success' : 'error');
+      loadWarehouse();
+    }
+  }, 800);
+};
+
+document.getElementById('btnCal').onclick = async () => {
+  const d = document.getElementById('calDate').value;
+  const offset = document.getElementById('calOffset').value;
+  const r = await API.data.calendar({ date: d, offset });
+  document.getElementById('calStats').innerHTML = `
+    <div><span class="muted" style="font-size:12px;display:block">目标日期</span><span class="mono">${r.date}</span></div>
+    <div><span class="muted" style="font-size:12px;display:block">是否交易日</span><span class="mono">${r.is_open?'是 ✓':'否'}</span></div>
+    <div><span class="muted" style="font-size:12px;display:block">交易日总数</span><span class="mono">${r.total_trade_days}</span></div>
+    <div><span class="muted" style="font-size:12px;display:block">范围</span><span class="mono">${r.earliest} → ${r.latest}</span></div>`;
+};
+
+document.getElementById('btnUni').onclick = async () => {
+  const r = await API.data.universe({
+    index_code: document.getElementById('uniIdx').value,
+    trade_date: document.getElementById('uniDate').value,
+    drop_st: document.getElementById('uniSt').checked,
+    drop_suspend: document.getElementById('uniSusp').checked,
+    drop_new_60d: document.getElementById('uniNew').checked,
+  });
+  document.getElementById('uniCount').textContent = `${r.items.length} / ${r.total} 只`;
+  document.getElementById('uniBody').innerHTML = r.items.slice(0, 20).map(it =>
+    `<tr><td class="mono">${it.symbol}</td><td>${it.name}</td><td>${it.industry||'-'}</td>
+     <td class="mono">${it.list_date||'-'}</td>
+     <td class="num">${it.market_cap?(it.market_cap/1e8).toFixed(0):'-'}</td>
+     <td class="num">${it.last_price||'-'}</td>
+     <td class="num">${it.pe_ttm||'-'}</td>
+     <td><span class="tag green">在池</span></td></tr>`).join('');
+  AQ.toast(`构建完成 ${r.items.length} 只`, 'success');
+};
+
+document.getElementById('btnSql').onclick = async () => {
+  try {
+    const r = await API.data.query(document.getElementById('sqlText').value);
+    let html = '<table class="table"><thead><tr>' + r.columns.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>' +
+      r.rows.map(row => '<tr>' + r.columns.map(c => `<td class="mono">${row[c]??''}</td>`).join('') + '</tr>').join('') +
+      '</tbody></table>';
+    document.getElementById('sqlResult').innerHTML = html + `<div class="muted" style="font-size:12px;margin-top:8px">${r.row_count} 行 ${r.warning?'· '+r.warning:''}</div>`;
+    AQ.toast('查询完成 ' + r.row_count + ' 行', 'success');
+  } catch (e) {
+    AQ.toast('查询失败: ' + e.message, 'error');
+  }
+};
+
+loadSources();
+loadWarehouse();
+loadJobs();
+</script>
+</body>
+</html>

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ashare-quant · 历史报告</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <div>
+    <header class="topbar"></header>
+    <main class="main">
+      <div class="page-title">
+        <h1>历史报告</h1>
+        <div><a class="btn btn-primary" href="backtest.html">新建回测</a></div>
+      </div>
+      <div class="page-subtitle">GET /api/reports · 报告列表 / 对比 / 导出</div>
+
+      <div class="panel">
+        <div class="row-flex wrap" style="gap:12px">
+          <select id="fType" style="width:180px">
+            <option value="">全部类型</option>
+            <option value="回测">回测</option>
+            <option value="模拟盘">模拟盘</option>
+            <option value="实盘日报">实盘日报</option>
+            <option value="实盘周报">实盘周报</option>
+            <option value="因子报告">因子报告</option>
+          </select>
+          <input type="date" id="fStart" style="width:160px">
+          <input type="date" id="fEnd" style="width:160px">
+          <input type="text" id="fSearch" placeholder="搜索报告名" style="flex:1">
+          <button class="btn btn-primary" id="btnFilter">筛选</button>
+          <button class="btn" id="btnCompare">对比已选 (<span id="selCount">0</span>)</button>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid cols-3" id="reportGrid"></div>
+
+      <div class="spacer-md"></div>
+
+      <div class="panel" id="cmpPanel" style="display:none">
+        <div class="panel-title"><span>策略对比</span></div>
+        <div style="height:340px"><canvas id="cmpChart"></canvas></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/api.js"></script>
+<script>
+AQ.renderSidebar('reports.html');
+AQ.renderTopbar('<b>历史报告</b>');
+
+let allReports = [];
+let selected = new Set();
+
+async function load(params = {}) {
+  allReports = await API.reports.list(params);
+  render();
+}
+
+function render() {
+  let arr = allReports;
+  const q = document.getElementById('fSearch').value.toLowerCase();
+  if (q) arr = arr.filter(r => (r.name || '').toLowerCase().includes(q));
+  document.getElementById('reportGrid').innerHTML = arr.map(r => `
+    <div class="panel" style="position:relative">
+      <span class="tag" style="position:absolute;top:14px;right:14px">${r.report_type}</span>
+      <div class="row-flex" style="gap:8px;margin-bottom:6px">
+        <input type="checkbox" data-id="${r.id}" ${selected.has(r.id)?'checked':''} onchange="toggleSel('${r.id}')">
+        <b>${r.name}</b>
+      </div>
+      <div class="muted mono" style="font-size:11.5px">${r.strategy||'-'}</div>
+      <div class="muted" style="font-size:12px;margin-top:8px">区间: ${r.start_date||'-'} ~ ${r.end_date||'-'}</div>
+      <div class="muted" style="font-size:12px">生成: ${new Date(r.created_at).toLocaleString('zh-CN',{hour12:false})}</div>
+      <div class="divider"></div>
+      <div class="row-flex" style="gap:18px">
+        <div><div class="muted" style="font-size:11px">收益</div>
+          <div class="${r.total_return>=0?'pos':'neg'}" style="font-weight:600">${r.total_return>=0?'+':''}${(r.total_return*100).toFixed(2)}%</div></div>
+        <div><div class="muted" style="font-size:11px">夏普</div>
+          <div style="font-weight:600">${r.sharpe.toFixed(2)}</div></div>
+        <div><div class="muted" style="font-size:11px">最大回撤</div>
+          <div class="neg" style="font-weight:600">${(r.max_drawdown*100).toFixed(2)}%</div></div>
+      </div>
+      <div class="row-flex" style="margin-top:10px;gap:6px">
+        <button class="btn btn-sm btn-primary" onclick='openDetail(${JSON.stringify(r.id)})'>查看</button>
+        <button class="btn btn-sm" onclick="AQ.toast('已导出 PDF','success')">PDF</button>
+      </div>
+    </div>`).join('');
+}
+
+function toggleSel(id) {
+  if (selected.has(id)) selected.delete(id);
+  else selected.add(id);
+  document.getElementById('selCount').textContent = selected.size;
+}
+window.toggleSel = toggleSel;
+
+document.getElementById('btnFilter').onclick = () => {
+  const params = {};
+  const t = document.getElementById('fType').value;
+  if (t) params.report_type = t;
+  const s = document.getElementById('fStart').value;
+  if (s) params.start_date = s;
+  const e = document.getElementById('fEnd').value;
+  if (e) params.end_date = e;
+  load(params);
+};
+
+document.getElementById('btnCompare').onclick = async () => {
+  if (selected.size < 2) { AQ.toast('请至少选择 2 份报告', 'warn'); return; }
+  const r = await API.reports.compare(Array.from(selected));
+  const palette = ['#22d3ee','#10b981','#a78bfa','#f59e0b','#ef4444','#06b6d4','#94a3b8'];
+  document.getElementById('cmpPanel').style.display = 'block';
+  if (window._cmpChart) window._cmpChart.destroy();
+  window._cmpChart = new Chart(document.getElementById('cmpChart'), {
+    type: 'line',
+    data: { labels: r.dates, datasets: Object.entries(r.series).map(([k, v], i) => ({
+      label: k === 'benchmark' ? '基准' : k, data: v,
+      borderColor: k === 'benchmark' ? '#94a3b8' : palette[i % palette.length],
+      borderWidth: k === 'benchmark' ? 1.5 : 2,
+      borderDash: k === 'benchmark' ? [4,4] : [],
+      tension: 0.2, pointRadius: 0,
+    })) }, options: AQ.CHART_DEFAULTS,
+  });
+};
+
+function openDetail(id) {
+  AQ.toast('报告 ' + id, 'info');
+  // TODO: 跳转或弹窗展开
+}
+window.openDetail = openDetail;
+
+load();
+</script>
+</body>
+</html>

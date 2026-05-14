@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ashare-quant · 因子探索</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <div>
+    <header class="topbar"></header>
+    <main class="main">
+      <div class="page-title"><h1>因子探索</h1></div>
+      <div class="page-subtitle">计算 · 中性化 · IC / Rank-IC · 分层回测 · 多空组合</div>
+
+      <div class="panel">
+        <div class="panel-title"><span>因子配置</span><small>POST /api/factors/compute</small></div>
+        <div class="grid cols-4">
+          <div><label class="muted" style="font-size:12px">因子</label>
+            <select id="factor"></select>
+          </div>
+          <div><label class="muted" style="font-size:12px">参数 (window/n)</label><input type="number" id="window" value="20"></div>
+          <div><label class="muted" style="font-size:12px">股票池</label>
+            <select id="universe"><option value="000300.SH">HS300</option><option value="000905.SH">ZZ500</option><option value="000906.SH">ZZ800</option><option value="ALL">全市场</option></select>
+          </div>
+          <div><label class="muted" style="font-size:12px">未来收益区间</label>
+            <select id="forward"><option value="1">1d</option><option value="5" selected>5d</option><option value="10">10d</option><option value="20">20d</option></select>
+          </div>
+          <div><label class="muted" style="font-size:12px">起始</label><input type="date" id="startDate" value="2022-01-01"></div>
+          <div><label class="muted" style="font-size:12px">结束</label><input type="date" id="endDate" value="2026-05-13"></div>
+        </div>
+        <div class="spacer-sm"></div>
+        <div class="row-flex wrap" style="gap: 16px;">
+          <label class="checkbox"><input type="checkbox" id="winsor" checked> Winsorize(2.5%)</label>
+          <label class="checkbox"><input type="checkbox" id="zscore" checked> Z-Score</label>
+          <label class="checkbox"><input type="checkbox" id="neuInd" checked> 行业中性化</label>
+          <label class="checkbox"><input type="checkbox" id="neuSize" checked> 市值中性化</label>
+        </div>
+        <div class="spacer-md"></div>
+        <button class="btn btn-primary" id="btnRun">▶ 计算并评估</button>
+        <button class="btn" onclick="AQ.toast('因子值已导出 CSV','success')">导出因子值</button>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid cols-5" id="kpiRow"></div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid cols-2">
+        <div class="panel">
+          <div class="panel-title">IC / Rank-IC 时间序列</div>
+          <div style="height:280px"><canvas id="icChart"></canvas></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><span>分层回测（10 组）</span><small>累计收益</small></div>
+          <div style="height:280px"><canvas id="quantileChart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid cols-2">
+        <div class="panel">
+          <div class="panel-title">分组表现</div>
+          <table class="table">
+            <thead><tr><th>分组</th><th class="num">总收益</th><th class="num">年化</th><th class="num">夏普</th><th class="num">最大回撤</th><th class="num">月胜率</th></tr></thead>
+            <tbody id="qstatBody"><tr><td colspan="6" class="center muted" style="padding:20px">点击"计算并评估"</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">月度 IC 热力图</div>
+          <div id="icHeatmap" style="display:grid;grid-template-columns:repeat(13,1fr);gap:3px;font-size:10px"></div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="panel">
+        <div class="panel-title"><span>已注册因子库</span><small>GET /api/factors/registry</small></div>
+        <table class="table">
+          <thead><tr><th>名称</th><th>类别</th><th>方向</th><th class="num">IC</th><th class="num">Rank-IC</th><th class="num">ICIR</th><th class="num">多空年化</th></tr></thead>
+          <tbody id="regBody"><tr><td colspan="7" class="center muted" style="padding:20px">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/api.js"></script>
+<script>
+AQ.renderSidebar('factors.html');
+AQ.renderTopbar('因子探索');
+
+let icChart, qChart;
+
+async function loadFactorList() {
+  const arr = await API.factors.list();
+  document.getElementById('factor').innerHTML = arr.map(f => `<option value="${f.name}">${f.name}</option>`).join('');
+}
+
+async function loadRegistry() {
+  const arr = await API.factors.registry();
+  document.getElementById('regBody').innerHTML = arr.map(f => `
+    <tr><td class="mono">${f.name}</td>
+      <td><span class="tag">${f.category||'-'}</span></td>
+      <td>${f.direction==='pos'?'正向':'反向'}</td>
+      <td class="num">${(f.ic_mean!=null)?f.ic_mean.toFixed(3):'-'}</td>
+      <td class="num">${(f.rank_ic_mean!=null)?f.rank_ic_mean.toFixed(3):'-'}</td>
+      <td class="num">${(f.ic_ir!=null)?f.ic_ir.toFixed(2):'-'}</td>
+      <td class="num pos">${(f.ls_annual!=null)?(f.ls_annual*100).toFixed(1)+'%':'-'}</td>
+    </tr>`).join('');
+}
+
+document.getElementById('btnRun').onclick = async () => {
+  const btn = document.getElementById('btnRun');
+  btn.disabled = true; btn.textContent = '计算中...';
+  try {
+    const neu = [];
+    if (document.getElementById('neuInd').checked) neu.push('industry');
+    if (document.getElementById('neuSize').checked) neu.push('size');
+    const body = {
+      factor: document.getElementById('factor').value,
+      params: { window: parseInt(document.getElementById('window').value) },
+      universe: document.getElementById('universe').value,
+      start_date: document.getElementById('startDate').value,
+      end_date: document.getElementById('endDate').value,
+      forward_window: parseInt(document.getElementById('forward').value),
+      neutralize: neu,
+      winsorize: document.getElementById('winsor').checked,
+      zscore: document.getElementById('zscore').checked,
+    };
+    const r = await API.factors.compute(body);
+    render(r);
+    AQ.toast('计算完成 IC=' + r.ic_mean, 'success');
+  } catch (e) {
+    AQ.toast('计算失败: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ 计算并评估';
+  }
+};
+
+function render(r) {
+  // KPI
+  document.getElementById('kpiRow').innerHTML = [
+    ['IC 均值', r.ic_mean.toFixed(3), 'up'],
+    ['Rank IC', r.rank_ic_mean.toFixed(3), 'up'],
+    ['ICIR', r.ic_ir.toFixed(2), ''],
+    ['IC 胜率', (r.ic_win_rate*100).toFixed(1)+'%', 'up'],
+    ['多空年化', (r.ls_annual*100).toFixed(2)+'%', 'up'],
+  ].map(([n,v,t]) => `<div class="kpi"><span class="label">${n}</span><span class="value">${v}</span><span class="delta ${t}"></span></div>`).join('');
+
+  if (icChart) icChart.destroy();
+  icChart = new Chart(document.getElementById('icChart'), {
+    type: 'bar',
+    data: { labels: r.dates, datasets: [
+      { label: 'IC', data: r.ic, backgroundColor: r.ic.map(v => v > 0 ? 'rgba(34,211,238,0.7)' : 'rgba(239,68,68,0.7)') },
+      { label: 'Rank-IC', data: r.rank_ic, backgroundColor: r.rank_ic.map(v => v > 0 ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.4)') },
+    ] }, options: AQ.CHART_DEFAULTS,
+  });
+
+  if (qChart) qChart.destroy();
+  const palette = ['#22d3ee','#06b6d4','#0ea5e9','#3b82f6','#6366f1','#a78bfa','#f59e0b','#fb923c','#ef4444','#dc2626','#10b981'];
+  const datasets = Object.entries(r.quantile_nav).map(([k, d], i) => ({
+    label: k, data: d, borderColor: palette[i] || '#ccc',
+    borderWidth: k === 'LS' ? 2.5 : 1.5, tension: 0.25, pointRadius: 0,
+    borderDash: k === 'LS' ? [] : [],
+  }));
+  qChart = new Chart(document.getElementById('quantileChart'), {
+    type: 'line', data: { labels: r.quantile_dates, datasets }, options: AQ.CHART_DEFAULTS,
+  });
+
+  // 分组表
+  document.getElementById('qstatBody').innerHTML = r.quantile_stats.map(s => {
+    const isLS = s.group === 'LS';
+    return `<tr style="${isLS?'background:rgba(34,211,238,0.05);font-weight:600':''}">
+      <td>${isLS?'<b>多空 (Q1-Q10)</b>':s.group}</td>
+      <td class="num ${s.total_return>=0?'pos':'neg'}">${(s.total_return*100).toFixed(2)}%</td>
+      <td class="num ${s.annual>=0?'pos':'neg'}">${(s.annual*100).toFixed(2)}%</td>
+      <td class="num">${s.sharpe.toFixed(2)}</td>
+      <td class="num neg">${(s.max_drawdown*100).toFixed(2)}%</td>
+      <td class="num">${(s.win_rate*100).toFixed(0)}%</td>
+    </tr>`;
+  }).join('');
+
+  // 月度 IC 热图
+  const yrs = [...new Set(r.monthly_ic.map(m => m.year))];
+  let h = '<div></div>';
+  for (let m = 1; m <= 12; m++) h += `<div style="text-align:center;color:var(--muted)">${m}月</div>`;
+  for (const y of yrs) {
+    h += `<div style="color:var(--muted)">${y}</div>`;
+    for (let m = 1; m <= 12; m++) {
+      const it = r.monthly_ic.find(x => x.year === y && x.month === m);
+      const v = it ? it.ic : 0;
+      const c = v > 0 ? `rgba(34,211,238,${Math.min(Math.abs(v)*15, 0.9)})` : `rgba(239,68,68,${Math.min(Math.abs(v)*15, 0.9)})`;
+      h += `<div title="${v.toFixed(3)}" style="background:${c};color:white;text-align:center;padding:8px 0;border-radius:3px">${v.toFixed(2)}</div>`;
+    }
+  }
+  document.getElementById('icHeatmap').innerHTML = h;
+}
+
+loadFactorList();
+loadRegistry();
+</script>
+</body>
+</html>

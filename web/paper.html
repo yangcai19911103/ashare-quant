@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ashare-quant · 模拟盘</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <div>
+    <header class="topbar"></header>
+    <main class="main">
+      <div class="page-title">
+        <h1>模拟盘 (Paper Trading)</h1>
+        <div>
+          <button class="btn btn-success" id="btnStart">▶ 启动</button>
+          <button class="btn btn-danger" id="btnStop">■ 停止</button>
+        </div>
+      </div>
+      <div class="page-subtitle">POST /api/paper/start · 数据全部存 MySQL · 多账户隔离</div>
+
+      <div class="panel">
+        <div class="panel-title">运行配置</div>
+        <div class="grid cols-4">
+          <div><label class="muted" style="font-size:12px">策略</label>
+            <select id="strategy"></select>
+          </div>
+          <div><label class="muted" style="font-size:12px">初始资金</label><input type="number" id="capital" value="1000000"></div>
+          <div><label class="muted" style="font-size:12px">回放模式</label>
+            <select id="mode"><option value="live">实时模式 (1x)</option><option value="x10">加速 10x</option><option value="x60">加速 60x</option><option value="historical">历史日重放</option></select>
+          </div>
+          <div><label class="muted" style="font-size:12px">起始日期</label><input type="date" id="startDate" value="2026-05-14"></div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid" style="grid-template-columns: 1fr 2fr;">
+        <div class="panel">
+          <div class="panel-title"><span>账户概览</span><small id="simState"><span class="tag gray">未运行</span></small></div>
+          <table class="table">
+            <tbody id="accountTbody"><tr><td colspan="2" class="center muted" style="padding:20px">加载中...</td></tr></tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><span>NAV 实时曲线</span></div>
+          <div style="height:300px"><canvas id="navChart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="panel">
+        <div class="panel-title"><span>当前持仓</span><small id="posCount">0 只</small></div>
+        <table class="table">
+          <thead><tr><th>代码</th><th class="num">持仓</th><th class="num">可卖</th><th class="num">成本</th><th class="num">现价</th><th class="num">市值</th><th class="num">盈亏 %</th><th class="num">盈亏</th><th class="num">权重</th><th></th></tr></thead>
+          <tbody id="posBody"><tr><td colspan="10" class="center muted" style="padding:30px">尚无持仓</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid cols-2">
+        <div class="panel">
+          <div class="panel-title"><span>订单簿</span></div>
+          <table class="table">
+            <thead><tr><th>时间</th><th>代码</th><th>方向</th><th class="num">数量</th><th class="num">价格</th><th>状态</th></tr></thead>
+            <tbody id="orderBody"><tr><td colspan="6" class="center muted" style="padding:20px">无</td></tr></tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><span>成交记录</span></div>
+          <table class="table">
+            <thead><tr><th>时间</th><th>代码</th><th>方向</th><th class="num">数量</th><th class="num">成交价</th><th class="num">手续费</th></tr></thead>
+            <tbody id="fillBody"><tr><td colspan="6" class="center muted" style="padding:20px">无</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="panel">
+        <div class="panel-title">手动下单</div>
+        <div class="grid cols-5">
+          <div><label class="muted" style="font-size:12px">代码</label><input type="text" id="mo_sym" placeholder="600519.SH"></div>
+          <div><label class="muted" style="font-size:12px">方向</label>
+            <select id="mo_side"><option>BUY</option><option>SELL</option></select>
+          </div>
+          <div><label class="muted" style="font-size:12px">数量</label><input type="number" id="mo_qty" value="100" step="100"></div>
+          <div><label class="muted" style="font-size:12px">类型</label>
+            <select id="mo_type"><option value="MKT">市价</option><option value="LMT">限价</option><option value="TWAP">TWAP</option><option value="VWAP">VWAP</option></select>
+          </div>
+          <div style="display:flex;align-items:flex-end;gap:8px">
+            <button class="btn btn-primary" style="width:100%" id="btnOrder">下单</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/api.js"></script>
+<script>
+AQ.renderSidebar('paper.html');
+AQ.renderTopbar('<b>模拟盘</b>');
+
+let navChart, refreshTimer;
+
+async function loadStrategies() {
+  const arr = await API.strategies.list();
+  document.getElementById('strategy').innerHTML = arr.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+  const qs = new URLSearchParams(window.location.search);
+  if (qs.get('strategy')) document.getElementById('strategy').value = qs.get('strategy');
+}
+
+document.getElementById('btnStart').onclick = async () => {
+  const body = {
+    strategy: document.getElementById('strategy').value,
+    init_capital: parseFloat(document.getElementById('capital').value),
+    replay_mode: document.getElementById('mode').value,
+    start_date: document.getElementById('startDate').value,
+  };
+  try {
+    await API.paper.start(body);
+    document.getElementById('simState').innerHTML = '<span class="tag green">运行中</span>';
+    AQ.toast('模拟盘已启动', 'success');
+    startPolling();
+  } catch (e) { AQ.toast('启动失败: ' + e.message, 'error'); }
+};
+
+document.getElementById('btnStop').onclick = async () => {
+  try {
+    await API.paper.stop();
+    document.getElementById('simState').innerHTML = '<span class="tag gray">已停止</span>';
+    AQ.toast('已停止', 'info');
+  } catch (e) { AQ.toast('失败: ' + e.message, 'error'); }
+};
+
+document.getElementById('btnOrder').onclick = async () => {
+  const body = {
+    symbol: document.getElementById('mo_sym').value || '600519.SH',
+    side: document.getElementById('mo_side').value,
+    qty: parseInt(document.getElementById('mo_qty').value),
+    order_type: document.getElementById('mo_type').value,
+  };
+  try {
+    await API.paper.order(body);
+    AQ.toast(`下单成功 ${body.side} ${body.symbol} × ${body.qty}`, 'success');
+    refresh();
+  } catch (e) { AQ.toast('下单失败: ' + e.message, 'error'); }
+};
+
+async function refresh() {
+  try {
+    const [acc, pos, ord, fil, nav] = await Promise.all([
+      API.paper.account(), API.paper.positions(),
+      API.paper.orders(), API.paper.fills(), API.paper.nav(),
+    ]);
+    renderAccount(acc, pos);
+    renderPositions(pos, acc);
+    renderOrders(ord);
+    renderFills(fil);
+    renderNav(nav);
+  } catch (e) { /* ignore */ }
+}
+
+function renderAccount(acc, pos) {
+  if (!acc) return;
+  const rows = [
+    ['总资产', '¥' + AQ.fmt(acc.total_asset)],
+    ['可用资金', '¥' + AQ.fmt(acc.cash)],
+    ['持仓市值', '¥' + AQ.fmt(acc.market_value)],
+    ['T+1 冻结', '¥' + AQ.fmt(acc.frozen)],
+    ['今日盈亏', (acc.today_pnl>=0?'+':'')+'¥'+AQ.fmt(Math.abs(acc.today_pnl))],
+    ['累计盈亏', (acc.total_pnl>=0?'+':'')+'¥'+AQ.fmt(Math.abs(acc.total_pnl))],
+    ['持仓数', pos.length],
+    ['状态', `<span class="tag ${acc.status==='running'?'green':'gray'}">${acc.status}</span>`],
+  ];
+  document.getElementById('accountTbody').innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td class="num mono">${r[1]}</td></tr>`).join('');
+}
+
+function renderPositions(pos, acc) {
+  document.getElementById('posCount').textContent = pos.length + ' 只';
+  if (!pos.length) {
+    document.getElementById('posBody').innerHTML = '<tr><td colspan="10" class="center muted" style="padding:30px">尚无持仓</td></tr>';
+    return;
+  }
+  document.getElementById('posBody').innerHTML = pos.map(p => `
+    <tr>
+      <td class="mono">${p.symbol}</td>
+      <td class="num">${p.qty.toLocaleString()}</td>
+      <td class="num">${p.available.toLocaleString()}</td>
+      <td class="num">${p.cost_price.toFixed(2)}</td>
+      <td class="num">${p.last_price.toFixed(2)}</td>
+      <td class="num">${AQ.fmt(p.market_value)}</td>
+      <td class="num ${p.pnl_pct>=0?'pos':'neg'}">${(p.pnl_pct*100).toFixed(2)}%</td>
+      <td class="num ${p.pnl>=0?'pos':'neg'}">${p.pnl>=0?'+':''}${AQ.fmt(Math.abs(p.pnl))}</td>
+      <td class="num">${(p.weight*100).toFixed(1)}%</td>
+      <td><button class="btn btn-sm" onclick="closePos('${p.symbol}')">平仓</button></td>
+    </tr>`).join('');
+}
+
+async function closePos(sym) {
+  try { await API.paper.closePos(sym); AQ.toast('平仓订单已发送', 'warn'); refresh(); }
+  catch (e) { AQ.toast('失败: ' + e.message, 'error'); }
+}
+window.closePos = closePos;
+
+function renderOrders(ord) {
+  if (!ord.length) { document.getElementById('orderBody').innerHTML = '<tr><td colspan="6" class="center muted" style="padding:20px">无</td></tr>'; return; }
+  document.getElementById('orderBody').innerHTML = ord.slice(0, 10).map(o => {
+    const t = new Date(o.ts).toLocaleTimeString('zh-CN', { hour12: false });
+    return `<tr><td class="mono">${t}</td><td class="mono">${o.symbol}</td>
+    <td>${o.side==='BUY'?'<span class="tag green">买</span>':'<span class="tag red">卖</span>'}</td>
+    <td class="num">${o.qty}</td><td class="num">${(o.avg_price||o.price||0).toFixed(2)}</td>
+    <td><span class="tag ${o.status==='filled'?'green':'yellow'}">${o.status}</span></td></tr>`;
+  }).join('');
+}
+
+function renderFills(fil) {
+  if (!fil.length) { document.getElementById('fillBody').innerHTML = '<tr><td colspan="6" class="center muted" style="padding:20px">无</td></tr>'; return; }
+  document.getElementById('fillBody').innerHTML = fil.slice(0, 10).map(f => {
+    const t = new Date(f.ts).toLocaleTimeString('zh-CN', { hour12: false });
+    return `<tr><td class="mono">${t}</td><td class="mono">${f.symbol}</td>
+    <td>${f.side==='BUY'?'<span class="tag green">买</span>':'<span class="tag red">卖</span>'}</td>
+    <td class="num">${f.qty}</td><td class="num">${f.price.toFixed(2)}</td><td class="num">${f.fee.toFixed(2)}</td></tr>`;
+  }).join('');
+}
+
+function renderNav(d) {
+  if (!d.ts.length) return;
+  if (navChart) navChart.destroy();
+  navChart = new Chart(document.getElementById('navChart'), {
+    type: 'line',
+    data: { labels: d.ts, datasets: [
+      { label: 'NAV', data: d.nav, borderColor: '#22d3ee', backgroundColor: 'rgba(34,211,238,0.10)', borderWidth: 2, tension: 0.25, pointRadius: 0, fill: true },
+    ] }, options: AQ.CHART_DEFAULTS,
+  });
+}
+
+function startPolling() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refresh();
+  refreshTimer = setInterval(refresh, 2500);
+}
+
+loadStrategies();
+refresh();
+startPolling();
+</script>
+</body>
+</html>

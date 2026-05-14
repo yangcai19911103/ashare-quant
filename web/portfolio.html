@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ashare-quant · 组合优化</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <div>
+    <header class="topbar"></header>
+    <main class="main">
+      <div class="page-title"><h1>组合优化</h1></div>
+      <div class="page-subtitle">POST /api/portfolio/optimize · cvxpy 凸优化 · 9 种方法 · 自定义约束</div>
+
+      <div class="grid" style="grid-template-columns: 1fr 1.5fr;">
+        <div class="panel">
+          <div class="panel-title">优化配置</div>
+
+          <div class="form-row"><label>优化方法</label>
+            <select id="method">
+              <option value="ew">等权 (Equal Weight)</option>
+              <option value="iv">逆波动率 (Inverse Volatility)</option>
+              <option value="rp">风险平价 (Risk Parity)</option>
+              <option value="mv">最小方差 (Min Variance)</option>
+              <option value="mvo">均值-方差 (MVO)</option>
+              <option value="maxsharpe">最大化夏普</option>
+              <option value="bl">Black-Litterman</option>
+              <option value="cvar">Min CVaR</option>
+              <option value="hrp">HRP 层次风险平价</option>
+            </select>
+          </div>
+          <div class="form-row"><label>标的代码</label>
+            <textarea rows="6" id="symbols">600519.SH
+000858.SZ
+601318.SH
+300750.SZ
+600276.SH
+002594.SZ
+600036.SH
+000651.SZ</textarea>
+          </div>
+          <div class="form-row"><label>历史窗口 (天)</label><input type="number" id="lookback" value="252"></div>
+          <div class="form-row"><label>单股上限 %</label><input type="number" id="maxw" value="20"></div>
+          <div class="form-row"><label>单股下限 %</label><input type="number" id="minw" value="0"></div>
+          <div class="form-row"><label>风险厌恶 λ</label><input type="number" id="lambda" value="2.5" step="0.1"></div>
+          <div class="row-flex wrap" style="gap:12px;margin-top:10px">
+            <label class="checkbox"><input type="checkbox" id="longonly" checked> 仅做多</label>
+          </div>
+          <div class="spacer-md"></div>
+          <button class="btn btn-primary" id="btnOpt">▶ 运行优化</button>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">优化结果</div>
+          <div class="grid cols-3" id="kpiRow">
+            <div class="kpi"><span class="label">预期年化收益</span><span class="value">--</span></div>
+            <div class="kpi"><span class="label">年化波动</span><span class="value">--</span></div>
+            <div class="kpi"><span class="label">夏普</span><span class="value">--</span></div>
+          </div>
+          <div class="spacer-md"></div>
+          <div class="grid cols-2">
+            <div>
+              <div class="muted" style="font-size:12px;margin-bottom:8px">权重分配</div>
+              <div style="height:240px"><canvas id="weightPie"></canvas></div>
+            </div>
+            <div>
+              <div class="muted" style="font-size:12px;margin-bottom:8px">风险贡献</div>
+              <div style="height:240px"><canvas id="riskBar"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="spacer-md"></div>
+
+      <div class="grid cols-2">
+        <div class="panel">
+          <div class="panel-title">效率前沿</div>
+          <div style="height:300px"><canvas id="efChart"></canvas></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">权重明细</div>
+          <table class="table">
+            <thead><tr><th>代码</th><th class="num">权重</th><th class="num">期望收益</th><th class="num">波动</th><th class="num">风险贡献</th></tr></thead>
+            <tbody id="weightTable"><tr><td colspan="5" class="center muted" style="padding:20px">点击"运行优化"</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/api.js"></script>
+<script>
+AQ.renderSidebar('portfolio.html');
+AQ.renderTopbar('<b>组合优化</b>');
+
+let weightPie, riskBar, efChart;
+
+document.getElementById('btnOpt').onclick = async () => {
+  const syms = document.getElementById('symbols').value.split('\n').map(s => s.trim().split(' ')[0]).filter(Boolean);
+  if (!syms.length) { AQ.toast('请填入标的', 'error'); return; }
+  const body = {
+    method: document.getElementById('method').value,
+    symbols: syms,
+    lookback_days: parseInt(document.getElementById('lookback').value),
+    max_weight: parseFloat(document.getElementById('maxw').value) / 100,
+    min_weight: parseFloat(document.getElementById('minw').value) / 100,
+    risk_aversion: parseFloat(document.getElementById('lambda').value),
+    long_only: document.getElementById('longonly').checked,
+  };
+  try {
+    const r = await API.portfolio.optimize(body);
+    render(r, syms);
+    AQ.toast('优化完成 ✓', 'success');
+  } catch (e) { AQ.toast('优化失败: ' + e.message, 'error'); }
+};
+
+function render(r, syms) {
+  document.getElementById('kpiRow').innerHTML = [
+    ['预期年化收益', (r.expected_return*100).toFixed(2)+'%'],
+    ['年化波动', (r.volatility*100).toFixed(2)+'%'],
+    ['夏普', r.sharpe.toFixed(2)],
+  ].map(([n,v]) => `<div class="kpi"><span class="label">${n}</span><span class="value">${v}</span></div>`).join('');
+
+  const palette = ['#22d3ee','#06b6d4','#0ea5e9','#3b82f6','#6366f1','#a78bfa','#10b981','#f59e0b','#ef4444','#fb923c'];
+  if (weightPie) weightPie.destroy();
+  weightPie = new Chart(document.getElementById('weightPie'), {
+    type: 'doughnut',
+    data: { labels: syms, datasets: [{ data: syms.map(s => (r.weights[s]*100).toFixed(2)), backgroundColor: palette, borderWidth: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 10 } } } }, cutout: '60%' }
+  });
+
+  if (riskBar) riskBar.destroy();
+  riskBar = new Chart(document.getElementById('riskBar'), {
+    type: 'bar',
+    data: { labels: syms, datasets: [{ label: '风险贡献', data: syms.map(s => (r.risk_contrib[s]*100).toFixed(3)), backgroundColor: 'rgba(167,139,250,0.7)' }] },
+    options: { ...AQ.CHART_DEFAULTS, indexAxis: 'y', plugins: { legend: { display: false } } }
+  });
+
+  document.getElementById('weightTable').innerHTML = syms.map((s, i) => {
+    const stat = r.asset_stats[i] || {};
+    return `<tr>
+      <td class="mono">${s}</td>
+      <td class="num">${(r.weights[s]*100).toFixed(2)}%</td>
+      <td class="num">${(stat.expected_return*100).toFixed(2)}%</td>
+      <td class="num">${(stat.volatility*100).toFixed(2)}%</td>
+      <td class="num">${(r.risk_contrib[s]*100).toFixed(3)}%</td>
+    </tr>`;
+  }).join('');
+
+  if (efChart) efChart.destroy();
+  efChart = new Chart(document.getElementById('efChart'), {
+    type: 'scatter',
+    data: { datasets: [
+      { label: '效率前沿', data: r.frontier.map(p => ({ x: p.vol*100, y: p.ret*100 })), borderColor: '#22d3ee', backgroundColor: '#22d3ee', showLine: true, tension: 0.3, pointRadius: 3 },
+      { label: '当前组合', data: [{ x: r.current_point.vol*100, y: r.current_point.ret*100 }], borderColor: '#ef4444', backgroundColor: '#ef4444', pointRadius: 8, pointStyle: 'star' },
+    ] },
+    options: { ...AQ.CHART_DEFAULTS, scales: { x: { ...AQ.CHART_DEFAULTS.scales.x, title: { display: true, text: '年化波动 (%)', color: '#94a3b8' } }, y: { ...AQ.CHART_DEFAULTS.scales.y, title: { display: true, text: '期望收益 (%)', color: '#94a3b8' } } } }
+  });
+}
+</script>
+</body>
+</html>
