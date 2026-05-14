@@ -29,7 +29,10 @@ mysql:
 api:
   host: 0.0.0.0
   port: 8000
-  auto_init_db: true        # 启动时自动 create_all + seed
+  # 启动时是否执行 SQLAlchemy create_all（缺表则建表，不删已有数据）
+  auto_init_db: true
+  # 是否在 auto_init_db 之后写入演示 seed（数据源/标的/因子/策略等）；false = 不同步演示数据
+  auto_seed: false
   cors_origins: ["*"]
 
 # -------------------------- 数据 --------------------------
