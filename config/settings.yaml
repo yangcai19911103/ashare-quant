@@ -126,3 +126,6 @@ logging:
   dir: ./logs
   rotation: "100 MB"
   retention: "30 days"
+  # API 服务 Uvicorn 访问/服务日志（api_access.log / api_server.log）滚动大小与份数，可选
+  # uvicorn_max_bytes: 104857600
+  # uvicorn_backup_count: 5
