@@ -25,7 +25,9 @@ def test_calendar_query(client):
     assert r.status_code == 200
     data = r.json()
     assert "date" in data and "is_open" in data
-    assert isinstance(data["is_open"], bool)
+    assert data["is_open"] is None or isinstance(data["is_open"], bool)
+    assert "total_trade_days" in data and isinstance(data["total_trade_days"], int)
+    assert "earliest" in data and "latest" in data
 
 
 def test_calendar_offset(client):
@@ -88,7 +90,9 @@ def test_job_status_not_found(client):
 def test_list_jobs(client):
     r = client.get("/api/data/jobs")
     assert r.status_code == 200
-    assert isinstance(r.json(), list)
+    data = r.json()
+    assert isinstance(data, list)
+    assert all(isinstance(x, dict) for x in data)
 
 
 def test_sql_select_query(client):

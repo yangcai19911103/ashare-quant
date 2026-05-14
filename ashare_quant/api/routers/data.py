@@ -15,7 +15,6 @@ from ..database import get_db
 from ..models import DailyBar, DataJob, DataSource, IndexMember, Instrument, TradeCalendar
 from ..schemas import DataInitRequest, SqlQuery, UniverseRequest
 from ..services.data_init import run_data_init_job
-from ..utils import sample_universe
 
 router = APIRouter()
 
@@ -90,16 +89,9 @@ def list_jobs(limit: int = 20, db: Session = Depends(get_db)):
     rows = db.scalars(
         select(DataJob).order_by(DataJob.created_at.desc()).limit(limit)
     ).all()
-    if rows:
-        return [{"id": r.id, "job_type": r.job_type, "status": r.status,
-                 "progress": r.progress, "started_at": r.started_at,
-                 "finished_at": r.finished_at} for r in rows]
-    return [
-        {"id": 0, "job_type": "日K增量",  "status": "success", "progress": 100, "started_at": "2026-05-13T17:30:00", "finished_at": "2026-05-13T17:32:00"},
-        {"id": 0, "job_type": "北向资金", "status": "success", "progress": 100, "started_at": "2026-05-13T17:33:00", "finished_at": "2026-05-13T17:35:00"},
-        {"id": 0, "job_type": "龙虎榜",   "status": "success", "progress": 100, "started_at": "2026-05-13T17:38:00", "finished_at": "2026-05-13T17:40:00"},
-        {"id": 0, "job_type": "财报快报", "status": "partial", "progress": 60,  "started_at": "2026-05-10T22:00:00", "finished_at": "2026-05-10T22:15:00"},
-    ]
+    return [{"id": r.id, "job_type": r.job_type, "status": r.status,
+             "progress": r.progress, "started_at": r.started_at,
+             "finished_at": r.finished_at} for r in rows]
 
 
 # ----------------- 交易日历 -----------------
@@ -107,18 +99,19 @@ def list_jobs(limit: int = 20, db: Session = Depends(get_db)):
 def query_calendar(d: date = Query(..., alias="date"), offset: int = 0, db: Session = Depends(get_db)):
     target = d + timedelta(days=offset)
     row = db.get(TradeCalendar, target)
-    is_open = bool(row.is_open) if row else (target.weekday() < 5)
+    is_open: bool | None = bool(row.is_open) if row else None
     total = db.scalar(
         select(func.count()).select_from(TradeCalendar).where(TradeCalendar.is_open == 1)
-    ) or 3652
+    )
+    total = int(total) if total is not None else 0
     min_d = db.scalar(select(func.min(TradeCalendar.trade_date)))
     max_d = db.scalar(select(func.max(TradeCalendar.trade_date)))
     return {
         "date": target.isoformat(),
         "is_open": is_open,
-        "total_trade_days": int(total),
-        "earliest": (min_d.isoformat() if min_d else "2010-01-04"),
-        "latest": (max_d.isoformat() if max_d else "2030-12-31"),
+        "total_trade_days": total,
+        "earliest": min_d.isoformat() if min_d else None,
+        "latest": max_d.isoformat() if max_d else None,
     }
 
 
@@ -131,8 +124,7 @@ def query_universe(req: UniverseRequest, db: Session = Depends(get_db)):
         .limit(200)
     ).all()
     if not rows:
-        items = sample_universe(20)
-        return {"total": 287, "items": items}
+        return {"total": 0, "items": []}
     items = [{
         "symbol": r.symbol, "name": r.name, "industry": r.industry,
         "list_date": r.list_date.isoformat() if r.list_date else None,

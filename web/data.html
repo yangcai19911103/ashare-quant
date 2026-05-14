@@ -123,7 +123,7 @@
         <div class="spacer-md"></div>
         <table class="table">
           <thead><tr><th>代码</th><th>名称</th><th>行业</th><th>上市日期</th><th class="num">市值(亿)</th><th class="num">最新价</th><th class="num">PE TTM</th><th>状态</th></tr></thead>
-          <tbody id="uniBody"><tr><td colspan="8" class="center muted" style="padding:20px">点击"构建股票池"开始</td></tr></tbody>
+          <tbody id="uniBody"><tr><td colspan="8" class="center muted" style="padding:20px">加载中...</td></tr></tbody>
         </table>
         <div class="row-flex between" style="margin-top:10px">
           <span class="muted" style="font-size:12.5px" id="uniCount">0 只</span>
@@ -182,6 +182,11 @@ async function loadWarehouse() {
 
 async function loadJobs() {
   const arr = await API.data.jobs();
+  if (!arr.length) {
+    document.getElementById('jobsBody').innerHTML =
+      '<tr><td colspan="4" class="center muted" style="padding:20px">暂无任务记录</td></tr>';
+    return;
+  }
   document.getElementById('jobsBody').innerHTML = arr.slice(0, 10).map(j => {
     const tag = j.status === 'success' ? 'green' : (j.status === 'partial' ? 'yellow' : 'red');
     const t = j.finished_at ? new Date(j.finished_at).toLocaleString('zh-CN', { hour12: false }) : (j.started_at || '-');
@@ -220,31 +225,47 @@ document.getElementById('btnCal').onclick = async () => {
   const d = document.getElementById('calDate').value;
   const offset = document.getElementById('calOffset').value;
   const r = await API.data.calendar({ date: d, offset });
+  const openLabel = r.is_open === true ? '是 ✓' : (r.is_open === false ? '否' : '—（无记录）');
+  const rangeLabel = (r.earliest != null && r.latest != null) ? `${r.earliest} → ${r.latest}` : '—';
   document.getElementById('calStats').innerHTML = `
     <div><span class="muted" style="font-size:12px;display:block">目标日期</span><span class="mono">${r.date}</span></div>
-    <div><span class="muted" style="font-size:12px;display:block">是否交易日</span><span class="mono">${r.is_open?'是 ✓':'否'}</span></div>
+    <div><span class="muted" style="font-size:12px;display:block">是否交易日</span><span class="mono">${openLabel}</span></div>
     <div><span class="muted" style="font-size:12px;display:block">交易日总数</span><span class="mono">${r.total_trade_days}</span></div>
-    <div><span class="muted" style="font-size:12px;display:block">范围</span><span class="mono">${r.earliest} → ${r.latest}</span></div>`;
+    <div><span class="muted" style="font-size:12px;display:block">范围</span><span class="mono">${rangeLabel}</span></div>`;
 };
 
-document.getElementById('btnUni').onclick = async () => {
-  const r = await API.data.universe({
-    index_code: document.getElementById('uniIdx').value,
-    trade_date: document.getElementById('uniDate').value,
-    drop_st: document.getElementById('uniSt').checked,
-    drop_suspend: document.getElementById('uniSusp').checked,
-    drop_new_60d: document.getElementById('uniNew').checked,
-  });
-  document.getElementById('uniCount').textContent = `${r.items.length} / ${r.total} 只`;
-  document.getElementById('uniBody').innerHTML = r.items.slice(0, 20).map(it =>
-    `<tr><td class="mono">${it.symbol}</td><td>${it.name}</td><td>${it.industry||'-'}</td>
-     <td class="mono">${it.list_date||'-'}</td>
-     <td class="num">${it.market_cap?(it.market_cap/1e8).toFixed(0):'-'}</td>
-     <td class="num">${it.last_price||'-'}</td>
-     <td class="num">${it.pe_ttm||'-'}</td>
-     <td><span class="tag green">在池</span></td></tr>`).join('');
-  AQ.toast(`构建完成 ${r.items.length} 只`, 'success');
-};
+/** 构建/刷新股票池表格。autoRun 为 true 时不弹任何提示（进入页面自动拉取）。 */
+async function loadUniverseTable(options) {
+  const autoRun = options && options.autoRun;
+  const tbody = document.getElementById('uniBody');
+  tbody.innerHTML = '<tr><td colspan="8" class="center muted" style="padding:20px">加载中...</td></tr>';
+  try {
+    const r = await API.data.universe({
+      index_code: document.getElementById('uniIdx').value,
+      trade_date: document.getElementById('uniDate').value,
+      drop_st: document.getElementById('uniSt').checked,
+      drop_suspend: document.getElementById('uniSusp').checked,
+      drop_new_60d: document.getElementById('uniNew').checked,
+    });
+    document.getElementById('uniCount').textContent = `${r.items.length} / ${r.total} 只`;
+    if (!r.items.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="center muted" style="padding:20px">暂无成分（请确认 index_member / instrument 是否有数据）</td></tr>';
+    } else {
+      tbody.innerHTML = r.items.slice(0, 200).map(it =>
+        `<tr><td class="mono">${it.symbol}</td><td>${it.name}</td><td>${it.industry||'-'}</td>
+         <td class="mono">${it.list_date||'-'}</td>
+         <td class="num">${it.market_cap?(it.market_cap/1e8).toFixed(0):'-'}</td>
+         <td class="num">${it.last_price||'-'}</td>
+         <td class="num">${it.pe_ttm||'-'}</td>
+         <td><span class="tag green">在池</span></td></tr>`).join('');
+    }
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="8" class="center muted" style="padding:20px">加载失败</td></tr>';
+    if (!autoRun) AQ.toast('股票池加载失败: ' + e.message, 'error');
+  }
+}
+
+document.getElementById('btnUni').onclick = () => loadUniverseTable({ autoRun: false });
 
 document.getElementById('btnSql').onclick = async () => {
   try {
@@ -262,6 +283,7 @@ document.getElementById('btnSql').onclick = async () => {
 loadSources();
 loadWarehouse();
 loadJobs();
+loadUniverseTable({ autoRun: true });
 </script>
 </body>
 </html>
