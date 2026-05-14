@@ -27,6 +27,9 @@ data_warehouse/
 _aq_test*.sqlite
 logs/
 
+# 本地运行态（API 管理脚本 PID 等）
+.run/
+
 # Test artifacts (保留 TEST_REPORT.md，忽略具体产物)
 reports/coverage_html/
 reports/api_test_report.html
